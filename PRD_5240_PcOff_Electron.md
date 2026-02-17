@@ -9,6 +9,7 @@
 | **Target Platforms** | Windows, macOS |
 | **Goal** | Feature parity with existing PcOff client and updated operational policies |
 | **Source References** | `purpose.md` (legacy), `usage.md` (legacy), `api.md` (legacy), `logcode.md` (legacy) |
+| **Last Updated** | 2026-02-16 |
 
 이 문서는 MFC 기반으로 개발돼 Windows에만 대응하던 5240.PcOff Agent를 Electron 기반으로 재구축하는 프로젝트의 Product Requirements Document(PRD)다. 기존 기능을 유지하면서 macOS 지원과 운영 효율 강화를 목표로 한다.
 
@@ -162,6 +163,42 @@ Windows 및 macOS에서 동일 수준의 기능을 제공하며 OS 차이로 인
 
 서버 설정값은 `api.md`에 정의된 인터페이스로 수신/적용하며, PCOFF Agent 통신 규격은 `docs/integration/PC_OFF_AGENT_API.md`를 단일 소스로 삼는다.
 
+### FR‑11 Leave Seat Detection (이석 감지)
+
+마우스/키보드 미사용 기준 시간(API 이석시간) 초과 또는 절전모드 복귀 시 절전 경과시간이 이석시간 이상이면 이석 화면을 표시한다. 이석 화면에는 이석감지시각을 표시하며, 절전 초과 시 절전 시작시각으로 표기한다.
+
+### FR‑12 Leave Seat Event Reporting (이석정보 서버 전송)
+
+일반모드/임시연장/긴급사용 중 이석 발생 시 `LEAVE_SEAT_START`, 복귀 시 `LEAVE_SEAT_END`를 서버에 전송한다. 세션 기반(leaveSeatSessionId, workSessionId)으로 매핑하며, 전송 실패 시 로컬 큐(JSONL)에 적재 후 지수 백오프로 재시도한다. 재시도 초과 시 Ops Observer에 경고한다. reason 필드는 200자 제한, 제어문자 제거, 로그 마스킹을 적용한다.
+
+### FR‑13 Screen Display Logic (시업/종업 화면 로직)
+
+종업시각/임시연장 허용시간 조합에 따라 종업화면과 시업화면을 일관된 규칙으로 표시한다. PC-ON 허용시간에 PC를 켠 경우 시업화면 없이 즉시 사용 가능하다. 자율출근(시업시각 없음) 시 시업화면에서 PC-ON으로 출근처리할 수 있다.
+
+### FR‑14 Tenant Lock Policy (고객사 설정 반영)
+
+고객사 관리자 콘솔에서 시업/종업/이석 화면 문구·이미지, 잠금화면 로고, 긴급해제 사용/비밀번호(minLength, requireComplexity, maxFailures, lockoutSeconds, expiresInDays), 이석해제 비밀번호 옵션을 설정할 수 있다. 설정은 서버에서 배포(Push + Periodic Polling 하이브리드)되며, 에이전트는 캐시 후 동적 렌더링한다. 관리자 콘솔은 Draft/Publish/Rollback 워크플로우와 권한 모델(VIEWER/EDITOR/APPROVER/ADMIN)을 지원한다.
+
+### FR‑15 Emergency Unlock (긴급해제)
+
+긴급사용과 별개로, 비밀번호 검증 후 잠금을 해제하는 긴급해제 기능을 제공한다. 5회 초과 실패 시 5분 차단하며, 긴급해제 성공 후 3시간 경과 시 조건 기반 잠금화면으로 자동 복귀한다.
+
+### FR‑16 Tray Operation Info (트레이 작동정보 조회)
+
+시스템 트레이에서 PCOFF 작동정보(현재 반영 근태정보, 버전정보, 현재 모드)를 즉시 조회할 수 있다. 모드 전환 시 실시간 UI 갱신을 제공한다.
+
+### FR‑17 Offline Recovery Lock (오프라인 복구·잠금)
+
+오프라인 시 전용 안내 화면을 표시하고, 30분 유예 후 미복구 시 화면 잠금(PC 사용 불가) 상태로 전환한다. 전 과정을 heartbeat 및 이벤트 로그로 보고한다.
+
+### FR‑18 Process Kill Control (프로세스 Kill 통제)
+
+사용자 임의 종료를 차단하며(표준 권한에서 kill/taskkill 불가), Kill은 관리자 OTP 검증 후에만 허용한다. 감사 로그 100% 기록, Windows/Linux/macOS 동일 모델 적용. Process Fingerprint(pid, createdAt, exePath, cmdLine, hash)로 PID 재사용 공격을 방지하며, KillToken은 JWT/PASETO 기반 TTL 2분으로 발급한다. OTP 재시도 제한 3회, 초과 시 30분 차단.
+
+### FR‑19 Install/Uninstall Policy (인스톨/언인스톨 정책)
+
+설치 시 환경 점검(OS/디스크/네트워크/권한), 중복 설치 탐지, 설치자 인증(사번·계정·기기)을 수행하고 무결성 기준선(SHA-256)을 생성한다. 최소 권한 설치기로 불필요한 시스템 변경을 최소화한다. 일반 사용자 임의 삭제를 금지하며, 삭제는 관리자 승인 또는 정책 토큰(1회용)으로만 허용한다. 삭제 시도 탐지 시 자동 복구를 트리거하고, 복구 실패 시 격리 모드로 전환한다.
+
 ---
 
 ## 5. Non‑Functional Requirements (NFR)
@@ -260,6 +297,57 @@ Windows와 macOS의 권한 모델 차이를 고려해 우회 시도를 탐지하
 
 **Acceptance:** 설치자 정보가 누락되면 실패이다.
 
+### Flow‑09 Leave Seat Detection
+
+1. 마우스/키보드 미사용 시간이 API 이석시간(leaveSeatTime)을 초과한다.
+2. 또는 절전모드 복귀 시 절전 경과시간이 이석시간 이상이다.
+3. 이석 화면을 표시하고 이석감지시각을 표기한다.
+4. 이석 해제 시 사유 정책에 따라 사유를 입력한다. (단, 휴게시간 중에는 사유입력 면제)
+
+**Acceptance:** 이석 감지·표시·해제가 정책대로 동작해야 하며, 휴게시간 사유 면제가 적용되어야 한다.
+
+### Flow‑10 Leave Seat Event Reporting
+
+1. 일반모드/임시연장/긴급사용 중 이석 발생 시 `LEAVE_SEAT_START`를 서버에 전송한다.
+2. 복귀(해제) 시 `LEAVE_SEAT_END`를 서버에 전송한다.
+3. 전송 실패 시 로컬 큐에 적재 후 온라인 복구 시 재전송한다.
+
+**Acceptance:** START/END가 동일 세션ID로 매핑되고, 전송 실패 시 재시도가 동작해야 한다.
+
+### Flow‑11 Screen Display Logic
+
+1. 종업시각과 임시연장 허용시간에 따라 종업화면/시업화면을 결정한다.
+2. PC-ON 허용시간에 PC를 켠 경우 시업화면 없이 즉시 사용 가능하다.
+3. 자율출근(시업시각 없음) 시 시업화면에서 PC-ON으로 출근처리할 수 있다.
+
+**Acceptance:** 시나리오별 화면 전환이 설계서와 일치해야 한다.
+
+### Flow‑12 Emergency Unlock
+
+1. 잠금 상태에서 긴급해제 버튼을 누른다.
+2. 비밀번호를 입력하고 서버 검증을 수행한다.
+3. 검증 성공 시 잠금을 해제하고, 3시간 후 조건 기반 잠금화면으로 복귀한다.
+4. 5회 초과 실패 시 5분간 재시도를 차단한다.
+
+**Acceptance:** 비밀번호 검증, 시도 제한, 3시간 만료가 동작해야 한다.
+
+### Flow‑13 Offline Recovery Lock
+
+1. 오프라인을 감지하고 전용 안내 화면을 표시한다.
+2. 30분간 복구를 시도하며 경과 시간을 표시한다.
+3. 30분 내 미복구 시 화면 잠금(PC 사용 불가) 상태로 전환한다.
+4. 온라인 복구 시 재인증 후 해제 가능하다.
+
+**Acceptance:** 30분 유예, 잠금 전환, 복구 후 해제가 동작해야 한다.
+
+### Flow‑14 Tray Operation Info
+
+1. 트레이에서 PCOFF 작동정보를 선택한다.
+2. 현재 반영 근태정보, 버전정보, 현재 모드를 표시한다.
+3. 모드 전환 시 UI가 실시간 갱신된다.
+
+**Acceptance:** 트레이 진입 → 정보 표시 → 모드 전환 갱신이 동작해야 한다.
+
 ---
 
 ## 7. Logging Requirements (Product Level)
@@ -268,12 +356,26 @@ Windows와 macOS의 권한 모델 차이를 고려해 우회 시도를 탐지하
 
 필수 이벤트:
 * `APP_START`
-* `LOGIN_SUCCESS` / `LOGIN_FAIL`
+* `LOGIN_SUCCESS` / `LOGIN_FAIL` / `LOGOUT`
 * `LOCK_TRIGGERED` / `UNLOCK_TRIGGERED`
 * `UPDATE_FOUND` / `UPDATE_DOWNLOADED` / `UPDATE_APPLIED` / `UPDATE_FAILED`
 * `PASSWORD_CHANGE_DETECTED` / `PASSWORD_CONFIRM_DONE`
-* `AGENT_TAMPER_DETECTED` / `AGENT_RECOVERED`
-* `CRASH_DETECTED` / `OFFLINE_DETECTED`
+* `AGENT_TAMPER_DETECTED` / `AGENT_TAMPER_ATTEMPT` / `AGENT_RECOVERED` / `AGENT_RECOVERY_FAILED` / `AGENT_STOP_ATTEMPT`
+* `CRASH_DETECTED` / `OFFLINE_DETECTED` / `OFFLINE_TIMEOUT_LOCK` / `OFFLINE_RECOVERED`
+* `HEARTBEAT`
+* `LEAVE_SEAT_IDLE_DETECTED` / `LEAVE_SEAT_SLEEP_DETECTED` / `LEAVE_SEAT_RELEASED`
+* `LEAVE_SEAT_START` / `LEAVE_SEAT_END`
+* `SLEEP_ENTERED` / `SLEEP_RESUMED`
+* `EMERGENCY_UNLOCK_ATTEMPT` / `EMERGENCY_UNLOCK_SUCCESS` / `EMERGENCY_UNLOCK_FAILED` / `EMERGENCY_UNLOCK_LOCKED` / `EMERGENCY_UNLOCK_EXPIRED`
+* `INSTALL_START` / `INSTALL_SUCCESS` / `INSTALL_FAIL` / `INSTALL_ROLLBACK` / `INSTALLER_REGISTRY_SYNC`
+* `UNINSTALL_REQUEST` / `UNINSTALL_ATTEMPT` / `UNINSTALL_SUCCESS` / `UNINSTALL_FAIL`
+* `KILL_REQUEST_CREATED` / `KILL_OTP_SENT` / `KILL_OTP_VERIFIED` / `KILL_OTP_FAILED` / `KILL_TOKEN_ISSUED` / `KILL_EXECUTED` / `KILL_REJECTED` / `KILL_ATTEMPT_BLOCKED`
+* `SELF_HEAL_SUCCESS` / `SELF_HEAL_FAIL` / `ISOLATION_MODE_ENTERED`
+* `LOCK_POLICY_DRAFT_SAVED` / `LOCK_POLICY_PUBLISHED` / `LOCK_POLICY_ROLLBACK`
+* `TRAY_INFO_OPENED` / `TRAY_ATTENDANCE_REFRESHED` / `TRAY_MODE_CHANGED`
+* `SCREEN_TYPE_BEFORE` / `SCREEN_TYPE_OFF` / `SCREEN_TYPE_USABLE` / `SCREEN_TRANSITION`
+* `OFFLINE_GRACE_STARTED` / `OFFLINE_RETRY`
+* `EMERGENCY_UNLOCK_EXPIRY_WARNING`
 
 로그 코드 매핑은 `docs/operations/logcode.md`를 기준으로 한다.
 
@@ -293,7 +395,7 @@ Windows와 macOS의 권한 모델 차이를 고려해 우회 시도를 탐지하
 
 ## 9. Definition of Done (Product DoD)
 
-* 핵심 기능 동등성 검증 완료
+* 핵심 기능 동등성 검증 완료 (MFC 시나리오와 결과 동일)
 * Windows와 macOS 설치 및 실행 검증 완료
 * 무확인 자동 업데이트 정책 검증 완료
 * 비밀번호 변경 확인‑only 정책 검증 완료
@@ -301,4 +403,12 @@ Windows와 macOS의 권한 모델 차이를 고려해 우회 시도를 탐지하
 * Agent 삭제 방지, 무결성 확인, 자동 복구 트리거 검증 완료
 * 중앙 서버 이상 상황 로그 수집 검증 완료
 * 설치자 목록 등록 및 조회 기능 검증 완료
+* 이석 감지·해제 플로우 (Idle/절전 기반) 검증 완료
+* 이석정보 서버 전송 (START/END 세션 매핑) 검증 완료
+* 시업/종업 화면 표시 로직 검증 완료
+* 고객사 설정 반영 (문구·이미지·로고·긴급해제·이석해제 비밀번호) 검증 완료
+* 긴급해제 (비밀번호 검증·시도제한·3시간 만료) 검증 완료
+* 오프라인 복구·잠금 (30분 유예) 검증 완료
+* 프로세스 Kill 통제·OTP 승인 플로우 검증 완료
+* 트레이 작동정보 조회 기능 검증 완료
 * 모든 문서와 코드 산출물이 Git에서 추적 가능

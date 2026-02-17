@@ -86,6 +86,13 @@ PRD Flow 기준 시뮬레이터 시나리오와 매핑입니다.
 | Flow-06 | `tamper_attempt` | Agent 삭제/우회 탐지 | FR-07 |
 | Flow-07 | `offline_detected` | 오프라인/충돌 감지 | FR-08 |
 | Flow-08 | `installer_registry_sync` | 설치자 레지스트리 동기화 | FR-09 |
+| Flow-09 | `leave_seat_idle` | Idle 기반 이석 감지 | FR-11 |
+| Flow-09 | `leave_seat_sleep` | 절전 기반 이석 감지 | FR-11 |
+| Flow-10 | `leave_seat_event_report` | 이석 이벤트 서버 전송 | FR-12 |
+| Flow-11 | `screen_display_logic` | 시업/종업 화면 결정 | FR-13 |
+| Flow-12 | `emergency_unlock` | 긴급해제 (비밀번호) | FR-15 |
+| Flow-13 | `offline_recovery_lock` | 오프라인 30분 유예·잠금 | FR-17 |
+| Flow-14 | `tray_operation_info` | 트레이 작동정보 조회 | FR-16 |
 
 - 전체 결과: `artifacts/parity-report.json`, 요약: `artifacts/parity-summary.md`
 - CI에서 시뮬레이터 자동 실행 시 위 아티팩트를 사용합니다.
@@ -112,9 +119,18 @@ PRD Flow 기준 시뮬레이터 시나리오와 매핑입니다.
 | 순서 | 항목 | 요약 |
 |------|------|------|
 | 1 | 설치자 레지스트리 | 설치자 정보 서버 등록·조회 (FR-09, Flow-08) |
-| 2 | 이석 해제 플로우 | 이석 화면 사유 입력 후 PC-ON (Flow-02 연계) |
-| 3 | 로그 코드 전수 반영 | logcode.md와 필수 이벤트 매핑 (PRD §7) |
-| 4 | 패키징·플랫폼 검증 | Windows installer, macOS pkg/dmg, 코드 서명 (NFR-01, DoD) |
+| 2 | 이석 감지·해제 플로우 | Idle/절전 기반 이석 감지, 사유 입력, 휴게시간 예외 (FR-11, Flow-09) |
+| 3 | 이석정보 서버 전송 | LEAVE_SEAT_START/END 세션 매핑, 재시도 큐 (FR-12, Flow-10) |
+| 4 | 오프라인 복구·잠금 | 30분 유예, 오프라인 잠금, 복구 시도 (FR-17, Flow-13) |
+| 5 | 긴급해제 (비밀번호) | 비밀번호 검증, 시도제한, 3시간 만료 (FR-15, Flow-12) |
+| 6 | 시업/종업 화면 로직 | 종업화면/시업화면 결정, PC-ON 예외, 자율출근 (FR-13, Flow-11) |
+| 7 | 고객사 설정 반영 | 문구·이미지·로고·긴급해제·이석해제 비밀번호 (FR-14) |
+| 8 | 트레이 작동정보 | 근태·버전·모드 표시, 실시간 갱신 (FR-16, Flow-14) |
+| 9 | 프로세스 Kill 통제 | 사용자 Kill 차단, OTP 승인 (FR-18) |
+| 10 | 인스톨/언인스톨 정책 | 설치자 식별, 무결성 기준선, 삭제 방지 (FR-19) |
+| 11 | 로그 코드 전수 반영 | logcode.md와 필수 이벤트 매핑 (PRD §7) |
+| 12 | Windows Defender/SmartScreen 대응 | 코드 서명, 평판 관리, 업데이트 무결성 |
+| 13 | 패키징·플랫폼 검증 | Windows installer, macOS pkg/dmg, 코드 서명 (NFR-01, DoD) |
 
 상세 내용은 **[docs/다음_개발_진행_사항.md](docs/다음_개발_진행_사항.md)** 참고.
 
