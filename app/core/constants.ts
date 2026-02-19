@@ -8,7 +8,8 @@ export const PATHS = {
   integrity: "guard/integrity.json",
   watchList: "guard/watch-list.json",
   updateDir: "update",
-  retryQueue: "update/retry-queue.json"
+  retryQueue: "update/retry-queue.json",
+  installerRegistry: "installer-registry.json"
 } as const;
 
 export const LOG_CODES = {
@@ -26,5 +27,7 @@ export const LOG_CODES = {
   AGENT_STOP_ATTEMPT: "AGENT_STOP_ATTEMPT",
   OFFLINE_DETECTED: "OFFLINE_DETECTED",
   CRASH_DETECTED: "CRASH_DETECTED",
-  HEARTBEAT: "HEARTBEAT"
+  HEARTBEAT: "HEARTBEAT",
+  INSTALLER_REGISTRY_SYNC: "INSTALLER_REGISTRY_SYNC",
+  INSTALLER_REGISTRY_FAIL: "INSTALLER_REGISTRY_FAIL"
 } as const;

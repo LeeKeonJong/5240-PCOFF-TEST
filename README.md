@@ -106,11 +106,13 @@ PRD Flow 기준 시뮬레이터 시나리오와 매핑입니다.
 
 - **로그인**: 2단계(전화번호 → 서비스영역 선택 → 계정·비밀번호), `state.json` 저장, 에러 메시지 디코딩. **Enter 키**로 다음/로그인 가능.
 - **단일 창(mainWindow)**: 작동정보·로그인·잠금화면을 **한 창에서 전환** (새 창 없이 동일 창에서 화면만 변경).
-- **로그아웃·작동정보·잠금화면**: 전역 핫키(Cmd+Shift+L/I/K, Ctrl+Shift+L/I/K). 로그인 후 잠금 필요 시 같은 창에서 잠금화면으로 전환.
+- **잠금화면 닫기 방지 (FR-07·FR-18 보완)**: `currentScreen` 상태 기반 분기. 잠금 중 X 버튼 완전 차단(`preventDefault`), 작동정보 창은 트레이로 숨김, 로그인 창은 일반 닫기 허용. ✅
+- **로그아웃·작동정보·잠금화면**: 전역 핫키(Cmd+Shift+L/I/K, Ctrl+Shift+L/I/K). 잠금화면 중에도 로그아웃 핫키 동작(close 우회). 로그인 후 잠금 필요 시 같은 창에서 잠금화면으로 전환.
 - **메인(잠금) 화면**: 근태정보 조회, 임시연장/긴급사용/PC-ON/PC-OFF 버튼. **PC-ON**·**긴급사용** 성공 시 같은 창에서 **작동정보 화면**으로 전환.
+- **설치자 레지스트리 (FR-09)**: `app/core/installer-registry.ts`. deviceId(UUID)·설치 시각·OS·앱 버전 수집, `installer-registry.json` 로컬 저장, 앱 시작 시 서버 동기화(`/registerInstallerInfo.do`). ✅
 - **API 연동**: getPcOffWorkTime, getPcOffServareaInfo, getPcOffLoginUserInfo, callPcOffTempDelay, callPcOffEmergencyUse, callCmmPcOnOffLogPrc
 - **시뮬레이터·CI**: Flow-01~08 시나리오, parity-report.json, parity-summary.md, CI 아티팩트
-- **로깅**: JSONL, TelemetryLogger, APP_START, LOGIN_SUCCESS/FAIL, UPDATE_*, AGENT_* 등 이벤트 (logcode.md 참고)
+- **로깅**: JSONL, TelemetryLogger, APP_START, LOGIN_SUCCESS/FAIL, UPDATE_*, AGENT_*, INSTALLER_REGISTRY_SYNC/FAIL 등 이벤트 (logcode.md 참고)
 - **자동 업데이트 (FR-03)**: `electron-updater` 기반 무확인 자동 업데이트, 재시도 큐, 진행률 UI 표시 ✅
 - **비밀번호 변경 확인 (FR-04)**: 서버 `pwdChgYn=Y` 감지 시 확인 전용 모달, 검증/재로그인 없음 ✅
 - **Agent Guard (FR-07)**: 무결성 체크(SHA-256), 파일 감시, 탐지 시 로그·복구 트리거, IPC 연동 ✅
@@ -124,22 +126,22 @@ PRD Flow 기준 시뮬레이터 시나리오와 매핑입니다.
 
 | 순서 | 항목 | 요약 |
 |------|------|------|
-| 1 | 설치자 레지스트리 | 설치자 정보 서버 등록·조회 (FR-09, Flow-08) |
-| 2 | 이석 감지·해제 플로우 | Idle/절전 기반 이석 감지, 사유 입력, 휴게시간 예외 (FR-11, Flow-09) |
-| 3 | 로그 코드 전수 반영 | logcode.md와 필수 이벤트 매핑 (PRD §7) |
-| 4 | 패키징·플랫폼 검증 | Windows installer, macOS pkg/dmg, 코드 서명 (NFR-01, DoD) |
-| 5 | 인스톨/언인스톨 정책 | 설치자 식별, 무결성 기준선, 삭제 방지 (FR-19) |
-| 6 | 잠금화면·에이전트 창 닫기 방지 | 창 X버튼/닫기 차단 (FR-07·FR-18 보완) |
-| 7 | 프로세스 Kill 통제 | 사용자 Kill 차단, OTP 승인 (FR-18) |
-| 8 | 오프라인 복구·잠금 | 30분 유예, 오프라인 잠금, 복구 시도 (FR-17, Flow-13) |
-| 9 | 다중 디스플레이 | 잠금 강화 alwaysOnTop·포커스, QA 시나리오 |
-| 10 | Windows Defender/SmartScreen 대응 | 코드 서명, 평판 관리, 업데이트 무결성 |
-| 11 | 이석/절전 감지 구현 | Idle·절전 기반 이석 화면, leaveDetectedAt 표시 |
-| 12 | 이석정보 서버 전송 | LEAVE_SEAT_START/END 세션 매핑, 재시도 큐 (FR-12, Flow-10) |
-| 13 | 시업/종업 화면 로직 | exCountRenewal·종업/시업 구분, 자율출근 (FR-13, Flow-11) |
-| 14 | 고객사 설정 반영 | 문구·이미지·로고·긴급해제·이석해제 비밀번호 (FR-14) |
-| 15 | 긴급해제 (비밀번호) | 비밀번호 검증, 시도제한, 3시간 만료 (FR-15, Flow-12) |
-| ~~16~~ | ~~트레이 작동정보~~ | ~~근태·버전·모드 표시 (FR-16, Flow-14)~~ **완료** |
+| ~~-~~ | ~~설치자 레지스트리~~ | ~~설치자 정보 서버 등록·조회 (FR-09, Flow-08)~~ **완료** ✅ |
+| ~~-~~ | ~~잠금화면·에이전트 창 닫기 방지~~ | ~~창 X버튼/닫기 차단 (FR-07·FR-18 보완)~~ **완료** ✅ |
+| 1 | 이석 감지·해제 플로우 | Idle/절전 기반 이석 감지, 사유 입력, 휴게시간 예외 (FR-11, Flow-09) |
+| 2 | 로그 코드 전수 반영 | logcode.md와 필수 이벤트 매핑 (PRD §7) |
+| 3 | 패키징·플랫폼 검증 | Windows installer, macOS pkg/dmg, 코드 서명 (NFR-01, DoD) |
+| 4 | 인스톨/언인스톨 정책 | 설치자 식별, 무결성 기준선, 삭제 방지 (FR-19) |
+| 5 | 프로세스 Kill 통제 | 사용자 Kill 차단, OTP 승인 (FR-18) |
+| 6 | 오프라인 복구·잠금 | 30분 유예, 오프라인 잠금, 복구 시도 (FR-17, Flow-13) |
+| 7 | 다중 디스플레이 | 잠금 강화 alwaysOnTop·포커스, QA 시나리오 |
+| 8 | Windows Defender/SmartScreen 대응 | 코드 서명, 평판 관리, 업데이트 무결성 |
+| 9 | 이석/절전 감지 구현 | Idle·절전 기반 이석 화면, leaveDetectedAt 표시 |
+| 10 | 이석정보 서버 전송 | LEAVE_SEAT_START/END 세션 매핑, 재시도 큐 (FR-12, Flow-10) |
+| 11 | 시업/종업 화면 로직 | exCountRenewal·종업/시업 구분, 자율출근 (FR-13, Flow-11) |
+| 12 | 고객사 설정 반영 | 문구·이미지·로고·긴급해제·이석해제 비밀번호 (FR-14) |
+| 13 | 긴급해제 (비밀번호) | 비밀번호 검증, 시도제한, 3시간 만료 (FR-15, Flow-12) |
+| ~~-~~ | ~~트레이 작동정보~~ | ~~근태·버전·모드 표시 (FR-16, Flow-14)~~ **완료** ✅ |
 
 상세 내용은 **[docs/다음_개발_진행_사항.md](docs/다음_개발_진행_사항.md)** 참고.
 

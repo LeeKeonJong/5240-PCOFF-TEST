@@ -19,7 +19,8 @@ const ALL_SCENARIOS: ScenarioName[] = [
 async function main(): Promise<void> {
   const command = args[0];
   if (command === "run") {
-    const scenario = (args[2] ?? "update_success") as ScenarioName;
+    const scenarioFlagIdx = args.lastIndexOf("--scenario");  // 중복 플래그 시 마지막 값 우선
+    const scenario = (scenarioFlagIdx >= 0 ? args[scenarioFlagIdx + 1] : "update_success") as ScenarioName;
     const result = await runScenario(scenario);
     await report([result]);
     console.log(JSON.stringify(result));

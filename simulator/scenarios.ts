@@ -47,7 +47,7 @@ export async function runScenario(name: ScenarioName): Promise<ScenarioResult> {
     case "offline_detected":
       return await runOfflineDetectedScenario();
     case "installer_registry_sync":
-      return ok(name, "Flow-08", ["FR-09"], ["INSTALLER_REGISTRY_SYNC"], "installer registry sync flow simulated");
+      return await runInstallerRegistrySyncScenario();
     default:
       return fail(name, "unknown flow", [], [], "unknown scenario");
   }
@@ -179,6 +179,60 @@ async function runOfflineDetectedScenario(): Promise<ScenarioResult> {
       expectedLogCodes,
       success: false,
       details: `offline simulation failed: ${error}`,
+      finishedAt: new Date().toISOString()
+    };
+  }
+}
+
+/**
+ * Flow-08: 설치자 레지스트리 동기화 시나리오 (FR-09)
+ * 로컬 저장 후 서버 동기화 시도(실패 허용)를 시뮬레이션
+ */
+async function runInstallerRegistrySyncScenario(): Promise<ScenarioResult> {
+  const scenario: ScenarioName = "installer_registry_sync";
+  const flowId = "Flow-08";
+  const requirementIds = ["FR-09"];
+  const expectedLogCodes = ["INSTALLER_REGISTRY_SYNC"];
+
+  try {
+    const { loadOrCreateInstallerRegistry, syncInstallerRegistry } = await import(
+      "../app/core/installer-registry.js"
+    );
+    const { TelemetryLogger } = await import("../app/core/telemetry-log.js");
+
+    const baseDir = process.cwd();
+    const logger = new TelemetryLogger(baseDir, "sim-installer", process.platform);
+
+    // 1. 레지스트리 로드(없으면 신규 생성)
+    const registry = await loadOrCreateInstallerRegistry(baseDir, "0.1.0-sim", "sim-user");
+
+    // 2. 서버 동기화 시도 (시뮬레이터는 서버 없이 실행하므로 fail 허용)
+    const synced = await syncInstallerRegistry(baseDir, registry, null);
+
+    // 3. INSTALLER_REGISTRY_SYNC 로그 (sync 성공 여부 무관하게 등록 자체는 성공)
+    await logger.write("INSTALLER_REGISTRY_SYNC", "INFO", {
+      deviceId: registry.deviceId,
+      installedAt: registry.installedAt,
+      syncStatus: synced.syncStatus
+    });
+
+    return {
+      scenario,
+      flowId,
+      requirementIds,
+      expectedLogCodes,
+      success: true,
+      details: `installer registry created: deviceId=${registry.deviceId}, syncStatus=${synced.syncStatus}`,
+      finishedAt: new Date().toISOString()
+    };
+  } catch (error) {
+    return {
+      scenario,
+      flowId,
+      requirementIds,
+      expectedLogCodes,
+      success: false,
+      details: `installer registry simulation failed: ${error}`,
       finishedAt: new Date().toISOString()
     };
   }

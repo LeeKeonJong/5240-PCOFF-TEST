@@ -21,12 +21,20 @@ import {
   clearLoginState,
   getLoginUserDisplay
 } from "../core/runtime-config.js";
+import {
+  loadOrCreateInstallerRegistry,
+  syncInstallerRegistry
+} from "../core/installer-registry.js";
 
 const baseDir = process.cwd();
 
 // 윈도우 관리: 모든 화면(작동정보·로그인·잠금)을 하나의 창에서 전환
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
+
+// 현재 화면 상태 추적 (닫기 방지 정책 결정에 사용)
+type ScreenType = "login" | "lock" | "tray-info";
+let currentScreen: ScreenType = "login";
 
 // 현재 운영 모드
 type OperationMode = "NORMAL" | "TEMP_EXTEND" | "EMERGENCY_USE" | "EMERGENCY_RELEASE";
@@ -111,6 +119,30 @@ function getRendererPath(htmlFile: string): string {
 }
 
 /**
+ * mainWindow close 이벤트 핸들러 부착
+ * - lock 화면: 닫기 완전 차단 (잠금 우회 방지)
+ * - tray-info 화면: 트레이로 숨김 (앱 유지)
+ * - login 화면: 일반 닫기 허용
+ */
+function attachMainWindowCloseHandler(win: BrowserWindow): void {
+  win.on("close", (e) => {
+    if (currentScreen === "lock") {
+      e.preventDefault();   // 잠금화면 닫기 완전 차단
+      return;
+    }
+    if (currentScreen === "tray-info") {
+      e.preventDefault();   // 작동정보는 닫기 대신 트레이로 숨김
+      win.hide();
+      return;
+    }
+    // login: 그냥 닫히도록 허용
+  });
+  win.on("closed", () => {
+    mainWindow = null;
+  });
+}
+
+/**
  * 트레이에서 열리는 에이전트 정보 화면 (main.html)
  * 버튼 없이 정보 조회만 가능
  */
@@ -119,6 +151,7 @@ function createTrayInfoWindow(): void {
   console.info("[PCOFF] Opening tray info window:", htmlPath);
 
   if (mainWindow && !mainWindow.isDestroyed()) {
+    currentScreen = "tray-info";
     mainWindow.setSize(560, 760);
     mainWindow.setTitle("PCOFF 작동정보");
     mainWindow.loadFile(htmlPath);
@@ -143,9 +176,8 @@ function createTrayInfoWindow(): void {
     }
   });
   mainWindow = win;
-  win.on("closed", () => {
-    mainWindow = null;
-  });
+  currentScreen = "tray-info";
+  attachMainWindowCloseHandler(win);
   win.once("ready-to-show", () => {
     win.show();
     win.focus();
@@ -164,6 +196,7 @@ function createTrayInfoWindow(): void {
  */
 function createLockWindow(): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
+    currentScreen = "lock";
     mainWindow.setSize(960, 640);
     mainWindow.setTitle("PCOFF 잠금화면");
     mainWindow.loadFile(getRendererPath("lock.html"));
@@ -177,7 +210,7 @@ function createLockWindow(): void {
     height: 640,
     resizable: false,
     minimizable: true,
-    closable: true,
+    closable: false,   // 잠금 중 닫기 버튼 비활성화
     fullscreenable: true,
     title: "PCOFF 잠금화면",
     webPreferences: {
@@ -187,9 +220,8 @@ function createLockWindow(): void {
     }
   });
   mainWindow = win;
-  win.on("closed", () => {
-    mainWindow = null;
-  });
+  currentScreen = "lock";
+  attachMainWindowCloseHandler(win);
   win.loadFile(getRendererPath("lock.html"));
 }
 
@@ -197,6 +229,7 @@ function createLockWindow(): void {
 function showLockInWindow(win: BrowserWindow): void {
   if (win.isDestroyed()) return;
   mainWindow = win;
+  currentScreen = "lock";
   win.setSize(960, 640);
   win.setTitle("PCOFF 잠금화면");
   win.loadFile(getRendererPath("lock.html"));
@@ -204,14 +237,11 @@ function showLockInWindow(win: BrowserWindow): void {
   win.focus();
 }
 
-/** 전역 핫키용 로그아웃: 로그인 정보 삭제 후 로그인 창만 표시 */
+/** 전역 핫키용 로그아웃: 로그인 정보 삭제 후 로그인 창 전환 */
 async function doGlobalLogout(): Promise<void> {
   await clearLoginState(baseDir);
   await logger.write("LOGOUT", "INFO", { source: "globalShortcut" });
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.close();
-    mainWindow = null;
-  }
+  // 잠금화면 닫기 방지 이벤트를 우회하기 위해 close 대신 화면 전환
   createLoginWindow();
 }
 
@@ -221,6 +251,7 @@ async function doGlobalLogout(): Promise<void> {
  */
 function createLoginWindow(): void {
   if (mainWindow && !mainWindow.isDestroyed()) {
+    currentScreen = "login";
     mainWindow.setSize(480, 560);
     mainWindow.setTitle("PCOFF 로그인");
     mainWindow.loadFile(getRendererPath("index.html"));
@@ -241,9 +272,8 @@ function createLoginWindow(): void {
     }
   });
   mainWindow = win;
-  win.on("closed", () => {
-    mainWindow = null;
-  });
+  currentScreen = "login";
+  attachMainWindowCloseHandler(win);
   win.loadFile(getRendererPath("index.html"));
 }
 
@@ -398,6 +428,39 @@ function stopLockCheckInterval(): void {
 app.whenReady().then(async () => {
   app.setName(APP_NAME);
   await logger.write(LOG_CODES.APP_START, "INFO", { platform: process.platform });
+
+  // FR-09: 설치자 레지스트리 초기화 및 서버 동기화 시도
+  void (async () => {
+    try {
+      const userDisplay = await getLoginUserDisplay(baseDir);
+      const appVersion = app.getVersion();
+      const registry = await loadOrCreateInstallerRegistry(
+        baseDir,
+        appVersion,
+        userDisplay.loginUserId ?? "unknown"
+      );
+      if (registry.syncStatus !== "synced") {
+        const apiBaseUrl = await getApiBaseUrl(baseDir);
+        const synced = await syncInstallerRegistry(baseDir, registry, apiBaseUrl);
+        if (synced.syncStatus === "synced") {
+          await logger.write(LOG_CODES.INSTALLER_REGISTRY_SYNC, "INFO", {
+            deviceId: synced.deviceId,
+            installedAt: synced.installedAt
+          });
+        } else {
+          await logger.write(LOG_CODES.INSTALLER_REGISTRY_FAIL, "WARN", {
+            deviceId: registry.deviceId,
+            reason: "server_sync_failed"
+          });
+        }
+      }
+    } catch (err) {
+      await logger.write(LOG_CODES.INSTALLER_REGISTRY_FAIL, "WARN", {
+        reason: String(err)
+      });
+    }
+  })();
+
   // FR-08: Ops Observer 시작 (heartbeat + 로그 서버 전송)
   observer.start();
   // FR-07: Agent Guard 시작 (무결성 감시)
