@@ -76,11 +76,12 @@ npm run dist:win
 
 설정 파일: [.github/workflows/release.yml](.github/workflows/release.yml)
 
-### 자동 업데이트 연동
+### 자동 업데이트 연동 (GitHub 기준)
 
-- 현재 앱은 **업데이트 서버**를 `package.json`의 `publish.url`(예: `https://update.tigris5240.com/pcoff-agent`)로 보고 있습니다.
-- **GitHub Release만 쓰려면**: `package.json`의 `build.publish`를 `{ "provider": "github" }`로 바꾸고, `repository` 필드에 `"owner/저장소이름"`을 넣으면, 설치된 앱이 GitHub Release에서 새 버전을 찾아 자동 업데이트합니다.
-- **기존 URL을 유지하려면**: CI로 만든 Release에서 `.exe`와 `latest.yml`을 다운로드한 뒤, 직접 업데이트 서버에 올리면 됩니다.
+- **설정됨**: `package.json`의 `publish`가 `"provider": "github"`로 되어 있어, 설치된 앱이 **GitHub Release**에서 새 버전을 확인합니다.
+- **필수**: `package.json`의 `repository.url`에서 **YOUR_ORG**를 실제 GitHub 조직(또는 사용자명), **PCOFF_TEST**를 실제 저장소 이름으로 바꾸세요.  
+  예: `https://github.com/tigris5240/PCOFF_TEST.git`
+- **동작**: 태그 푸시(또는 웹에서 릴리스 생성) → CI가 빌드해 Release에 `.exe`·`latest.yml` 업로드 → 사용자 PC의 앱이 재시작 시 또는 업데이트 확인 시 새 버전을 받아 자동 적용합니다.
 
 ---
 
