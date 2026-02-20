@@ -110,21 +110,26 @@ jobs:
         run: |
           rm -f win-x64/builder-debug.yml mac/builder-debug.yml 2>/dev/null || true
 
+      # electron-updater는 Release 자산명이 정확히 latest.yml / latest-mac.yml 이어야 함 (경로 없이)
+      - name: Flatten release assets for updater
+        run: |
+          mkdir -p release-assets
+          (shopt -s nullglob; for f in win-x64/*.yml win-x64/*.exe win-x64/*.blockmap; do cp "$f" release-assets/; done)
+          (shopt -s nullglob; for f in mac/*.yml mac/*.dmg mac/*.zip mac/*.blockmap; do cp "$f" release-assets/; done)
+          ls -la release-assets/
+
       - name: Create GitHub Release (gh CLI, 재시도 제어)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           TAG="${{ github.ref_name }}"
           REPO="${{ github.repository }}"
-          # 릴리스 없으면 생성 (이미 있으면 무시)
           gh release create "$TAG" --title "Release $TAG" --notes "" --generate-notes=false -R "$REPO" 2>/dev/null || true
-          # 업로드: 최대 5회 재시도
           set +e
+          cd release-assets
           for i in 1 2 3 4 5; do
             FILES=()
-            for g in win-x64/*.exe win-x64/*.yml win-x64/*.blockmap mac/*.dmg mac/*.zip mac/*.yml mac/*.blockmap; do
-              [ -e "$g" ] && FILES+=("$g")
-            done
+            for f in *; do [ -e "$f" ] && FILES+=("$f"); done
             [ ${#FILES[@]} -eq 0 ] && { echo "No files to upload"; exit 1; }
             if gh release upload "$TAG" "${FILES[@]}" --clobber -R "$REPO"; then
               echo "Upload succeeded."
