@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, shell, globalShortcut } from "electron";
 import type { LeaveSeatDetectedReason } from "../core/leave-seat-detector.js";
 import { LeaveSeatDetector } from "../core/leave-seat-detector.js";
-import { existsSync, copyFileSync, mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { APP_NAME, LOG_CODES } from "../core/constants.js";
@@ -326,9 +326,11 @@ function showLockForLocalLeaveSeat(detectedAt: Date, reason: LeaveSeatDetectedRe
 
 /** 전역 핫키용 로그아웃: 로그인 정보 삭제 후 로그인 창 전환 */
 async function doGlobalLogout(): Promise<void> {
+  stopLockCheckInterval();
   await clearLoginState(baseDir);
+  lastWorkTimeData = {};
+  lastWorkTimeFetchedAt = null;
   await logger.write("LOGOUT", "INFO", { source: "globalShortcut" });
-  // 잠금화면 닫기 방지 이벤트를 우회하기 위해 close 대신 화면 전환
   createLoginWindow();
 }
 
@@ -540,17 +542,21 @@ app.whenReady().then(async () => {
   app.setName(APP_NAME);
   // 설치 앱: userData 사용(개발 시 state와 분리). 개발: process.cwd()
   baseDir = app.isPackaged ? app.getPath("userData") : process.cwd();
-  // 설치 앱 첫 실행: userData에 config 없으면 번들(extraResources) config 복사 → API 주소 설정 오류 방지
+  // 설치 앱 첫 실행: userData에 config 없으면 번들에서 apiBaseUrl만 가져옴 (로그인 정보는 복사하지 않음)
   if (app.isPackaged) {
     const userConfigPath = join(baseDir, "config.json");
     const bundledConfigPath = join(process.resourcesPath, "config.json");
     if (!existsSync(userConfigPath) && existsSync(bundledConfigPath)) {
       try {
         mkdirSync(baseDir, { recursive: true });
-        copyFileSync(bundledConfigPath, userConfigPath);
-        console.info("[PCOFF] config.json copied from bundle to userData");
+        const raw = readFileSync(bundledConfigPath, "utf-8");
+        const bundled = JSON.parse(raw) as Record<string, unknown>;
+        const safeConfig: Record<string, unknown> = {};
+        if (bundled.apiBaseUrl) safeConfig.apiBaseUrl = bundled.apiBaseUrl;
+        writeFileSync(userConfigPath, JSON.stringify(safeConfig, null, 2), "utf-8");
+        console.info("[PCOFF] config.json created in userData (apiBaseUrl only)");
       } catch (e) {
-        console.warn("[PCOFF] Failed to copy config from bundle:", e);
+        console.warn("[PCOFF] Failed to create config from bundle:", e);
       }
     }
   }
@@ -829,7 +835,10 @@ ipcMain.handle(
   }
 );
 ipcMain.handle("pcoff:logout", async () => {
+  stopLockCheckInterval();
   await clearLoginState(baseDir);
+  lastWorkTimeData = {};
+  lastWorkTimeFetchedAt = null;
   await logger.write("LOGOUT", "INFO", {});
   return { success: true };
 });
