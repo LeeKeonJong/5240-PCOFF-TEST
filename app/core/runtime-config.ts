@@ -62,11 +62,18 @@ export async function saveLoginState(baseDir: string, state: AppState): Promise<
   await writeJson(statePath, { ...existing, ...state, lastLoginAt: new Date().toISOString() });
 }
 
-/** 로그아웃: state.json에서 로그인 관련 필드만 제거 */
+/** 로그아웃: state.json + config.json에서 로그인 관련 필드 모두 제거 */
 export async function clearLoginState(baseDir: string): Promise<void> {
   const statePath = join(baseDir, PATHS.state);
   const existing = await readJson<AppState>(statePath, {});
   const { userServareaId, userStaffId, loginUserId, loginUserNm, posNm, corpNm, lastLoginAt, ...rest } = existing;
   await writeJson(statePath, rest);
+
+  const configPath = join(baseDir, PATHS.config);
+  const config = await readJson<Record<string, unknown>>(configPath, {});
+  if (config.userServareaId || config.userStaffId) {
+    const { userServareaId: _a, userStaffId: _b, ...cleanConfig } = config;
+    await writeJson(configPath, cleanConfig);
+  }
 }
 
