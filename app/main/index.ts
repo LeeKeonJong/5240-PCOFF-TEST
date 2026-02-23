@@ -1208,8 +1208,10 @@ ipcMain.handle("pcoff:requestPcExtend", async (_event, payload: { pcOffYmdTime?:
   if (!api) return { source: "mock", success: true };
   try {
     const pcOffYmdTime = payload.pcOffYmdTime ?? buildMockWorkTime().pcOffYmdTime ?? "";
-    const data = await api.callPcOffTempDelay(pcOffYmdTime);
-    await logger.write(LOG_CODES.UNLOCK_TRIGGERED, "INFO", { action: "pc_extend", pcOffYmdTime });
+    const currentCount = Number(lastWorkTimeData?.pcExCount ?? 0);
+    const extCount = currentCount + 1;
+    const data = await api.callPcOffTempDelay(pcOffYmdTime, extCount);
+    await logger.write(LOG_CODES.UNLOCK_TRIGGERED, "INFO", { action: "pc_extend", pcOffYmdTime, extCount });
     setOperationMode("TEMP_EXTEND");
     const workTime = await api.getPcOffWorkTime();
     lastWorkTimeData = workTime as unknown as Record<string, unknown>;
@@ -1223,11 +1225,14 @@ ipcMain.handle("pcoff:requestPcExtend", async (_event, payload: { pcOffYmdTime?:
   }
 });
 
-ipcMain.handle("pcoff:requestEmergencyUse", async (_event, payload: { reason: string }): Promise<ActionResult> => {
+ipcMain.handle("pcoff:requestEmergencyUse", async (_event, payload: { reason?: string; emergencyUsePass?: string }): Promise<ActionResult> => {
   const api = await getApiClient();
   if (!api) return { source: "mock", success: true };
   try {
-    const data = await api.callPcOffEmergencyUse({ reason: payload.reason || "긴급사용 요청" });
+    const data = await api.callPcOffEmergencyUse({
+      emergencyUsePass: payload.emergencyUsePass ?? "",
+      reason: payload.reason || "긴급사용 요청"
+    });
     await logger.write(LOG_CODES.UNLOCK_TRIGGERED, "INFO", { action: "emergency_use" });
     // 긴급사용 성공 시 잠금 해제 → 작동정보 화면으로 전환
     createTrayInfoWindow();

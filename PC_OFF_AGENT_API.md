@@ -264,7 +264,7 @@ API마다 달라질 수 있으나, 일반적으로 다음 값이 함께 전달�
 
 ### 2.7 에이전트 이벤트 보고 (FR-08, Ops Observer)
 
-**Endpoint:** `POST {Base URL}/reportAgentEvents.do` (To‑Be 전용, Base URL 동일 적용)
+**Endpoint:** `POST https://api.5240.cloud/reportAgentEvents.do` (To‑Be 전용)
 
 **Scenario:** 에이전트가 heartbeat, 크래시 감지(CRASH_DETECTED), 통신 두절(OFFLINE_DETECTED) 등 이벤트를 중앙 서버에 배치 전송한다. 서버에 "중지/충돌/통신단절" 기록이 남도록 한다.
 
@@ -284,7 +284,7 @@ API마다 달라질 수 있으나, 일반적으로 다음 값이 함께 전달�
 
 ### 2.8 이석정보 서버 전송 (FR-12)
 
-**Endpoint:** `POST {Base URL}/reportLeaveSeatEvent.do` (To‑Be 전용, Base URL 동일 적용)
+**Endpoint:** `POST https://api.5240.cloud/reportLeaveSeatEvent.do` (To‑Be 전용)
 
 **Scenario:** 에이전트가 이석 시작(START)/종료(END) 이벤트를 세션 기반(`leaveSeatSessionId`)으로 서버에 전송한다. Idle/절전 감지 시 START, PC-ON 해제 시 END. 장애 내성을 위해 실패 시 로컬 큐(JSONL) 적재 후 지수 백오프 재시도.
 
