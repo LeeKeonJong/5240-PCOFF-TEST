@@ -170,6 +170,8 @@ export class UpdateManager {
       this.sendStatusToRenderer();
       try {
         await this.autoUpdater.checkForUpdates();
+        // 이벤트(update-not-available 등)가 먼저 처리되도록 짧게 대기 후 상태 반환
+        await new Promise((r) => setTimeout(r, 150));
         return this.status;
       } catch (error) {
         const errorMessage =

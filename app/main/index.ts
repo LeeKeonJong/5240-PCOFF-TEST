@@ -31,13 +31,15 @@ import {
   getApiBaseUrl,
   saveLoginState,
   clearLoginState,
-  getLoginUserDisplay
+  getLoginUserDisplay,
+  type RuntimeConfig
 } from "../core/runtime-config.js";
 import {
   loadOrCreateInstallerRegistry,
   syncInstallerRegistry
 } from "../core/installer-registry.js";
 import { LeaveSeatReporter } from "../core/leave-seat-reporter.js";
+import { readJson } from "../core/storage.js";
 
 /** 개발 시: 프로젝트 디렉터리, 설치 앱: userData(설치 앱 전용 상태·로그 분리) */
 let baseDir = process.cwd();
@@ -63,6 +65,17 @@ let lastWorkTimeFetchedAt: string | null = null;
 let cachedApiBaseUrl: string | null = null;
 let cachedUserServareaId = "";
 let cachedUserStaffId = "";
+
+/** getApiClient 호출 시 반복 파일 I/O 방지 (state.json, config.json). 로그아웃 시 무효화 */
+const RUNTIME_CONFIG_CACHE_MS = 60_000; // 1분
+let cachedRuntimeConfig: { config: RuntimeConfig; at: number } | null = null;
+
+function invalidateRuntimeConfigCache(): void {
+  cachedRuntimeConfig = null;
+  cachedApiBaseUrl = null;
+  cachedUserServareaId = "";
+  cachedUserStaffId = "";
+}
 
 /** 로컬 이석 감지(유휴/절전)로 잠금된 경우: 감지 시각·사유. PC-ON 해제 시 클리어 */
 let localLeaveSeatDetectedAt: Date | null = null;
@@ -152,8 +165,19 @@ type ActionResult = {
 };
 
 async function getApiClient(): Promise<PcOffApiClient | null> {
-  const runtimeConfig = await loadRuntimeConfig(baseDir);
-  if (!runtimeConfig) return null;
+  const now = Date.now();
+  let runtimeConfig: RuntimeConfig | null =
+    cachedRuntimeConfig && now - cachedRuntimeConfig.at < RUNTIME_CONFIG_CACHE_MS
+      ? cachedRuntimeConfig.config
+      : null;
+  if (!runtimeConfig) {
+    runtimeConfig = await loadRuntimeConfig(baseDir);
+    if (!runtimeConfig) return null;
+    cachedRuntimeConfig = { config: runtimeConfig, at: now };
+  }
+  cachedApiBaseUrl = runtimeConfig.apiBaseUrl;
+  cachedUserServareaId = runtimeConfig.userServareaId;
+  cachedUserStaffId = runtimeConfig.userStaffId;
   return new PcOffApiClient({
     baseUrl: runtimeConfig.apiBaseUrl,
     workYmd: getTodayYmd(),
@@ -257,7 +281,7 @@ function attachWindowHotkeys(win: BrowserWindow): void {
       void createTrayInfoWindow();
     } else if (key === "k") {
       event.preventDefault();
-      createLockWindow();
+      void createLockWindow();
     } else if (key === "l") {
       event.preventDefault();
       void doGlobalLogout();
@@ -344,11 +368,171 @@ async function createTrayInfoWindow(): Promise<void> {
   }
 }
 
+/** WebView getScreenInfo.php 형식: POST [{ userServareaId }] → { status, send_data } */
+async function fetchLockScreenFromUrl(
+  url: string,
+  userServareaId: string
+): Promise<Partial<WorkTimeResponse>> {
+  const body = JSON.stringify([{ userServareaId }]);
+  const res = await fetch(url.trim(), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body
+  });
+  if (!res.ok) throw new Error(`${url} ${res.status}`);
+  const json = (await res.json()) as { status?: string; send_data?: Array<{ ScreenType?: string; LockTitle?: string; LockMessage?: string }> };
+  const list = json?.send_data ?? [];
+  const out: Partial<WorkTimeResponse> = {};
+  for (const item of list) {
+    const t = (item.ScreenType ?? "").toLowerCase();
+    if (t === "before") {
+      if (item.LockTitle != null) out.lockScreenBeforeTitle = String(item.LockTitle);
+      if (item.LockMessage != null) out.lockScreenBeforeMessage = String(item.LockMessage);
+    } else if (t === "off") {
+      if (item.LockTitle != null) out.lockScreenOffTitle = String(item.LockTitle);
+      if (item.LockMessage != null) out.lockScreenOffMessage = String(item.LockMessage);
+    } else if (t === "empty" || t === "leave") {
+      if (item.LockTitle != null) out.lockScreenLeaveTitle = String(item.LockTitle);
+      if (item.LockMessage != null) out.lockScreenLeaveMessage = String(item.LockMessage);
+    }
+  }
+  return out;
+}
+
+/** 잠금화면 문구 포함 근태 조회 (getPcOffWorkTime + getLockScreenInfo / lockScreenApiUrl + config.json 병합). 핫키/잠금창 오픈 시 선호출용 */
+async function fetchWorkTimeWithLockScreen(api: PcOffApiClient): Promise<WorkTimeResponse> {
+  const config = await readJson<{
+    lockScreen?: {
+      before?: { title?: string; message?: string };
+      off?: { title?: string; message?: string };
+      leave?: { title?: string; message?: string };
+    };
+    /** WebView와 동일한 잠금화면 API URL (예: https://5240.work/LockScreen/getScreenInfo.php). 설정 시 getLockScreenInfo.do 실패해도 이 URL로 문구 조회 */
+    lockScreenApiUrl?: string;
+  }>(join(baseDir, PATHS.config), {});
+
+  let data = await api.getPcOffWorkTime();
+  const hasLockScreenFromWorkTime =
+    (data.lockScreenBeforeTitle ?? data.lockScreenOffTitle ?? data.lockScreenLeaveTitle) != null &&
+    (String(data.lockScreenBeforeTitle ?? data.lockScreenOffTitle ?? data.lockScreenLeaveTitle).trim() !== "");
+
+  if (!hasLockScreenFromWorkTime) {
+    let screenInfo: Partial<WorkTimeResponse> | null = null;
+    try {
+      screenInfo = await api.getLockScreenInfo();
+    } catch (e) {
+      console.info("[PCOFF] 잠금화면 문구 — getLockScreenInfo.do 미사용:", String(e));
+    }
+    const hasFromDo =
+      screenInfo != null &&
+      (screenInfo.lockScreenBeforeTitle ?? screenInfo.lockScreenOffTitle ?? screenInfo.lockScreenLeaveTitle) != null;
+    if (hasFromDo && screenInfo) {
+      const merged = { ...data } as Record<string, unknown>;
+      if (screenInfo.lockScreenBeforeTitle != null) merged.lockScreenBeforeTitle = screenInfo.lockScreenBeforeTitle;
+      if (screenInfo.lockScreenBeforeMessage != null) merged.lockScreenBeforeMessage = screenInfo.lockScreenBeforeMessage;
+      if (screenInfo.lockScreenOffTitle != null) merged.lockScreenOffTitle = screenInfo.lockScreenOffTitle;
+      if (screenInfo.lockScreenOffMessage != null) merged.lockScreenOffMessage = screenInfo.lockScreenOffMessage;
+      if (screenInfo.lockScreenLeaveTitle != null) merged.lockScreenLeaveTitle = screenInfo.lockScreenLeaveTitle;
+      if (screenInfo.lockScreenLeaveMessage != null) merged.lockScreenLeaveMessage = screenInfo.lockScreenLeaveMessage;
+      data = merged as WorkTimeResponse;
+      console.info("[PCOFF] 잠금화면 문구 — getLockScreenInfo.do 적용됨");
+    } else if (config.lockScreenApiUrl?.trim() && cachedUserServareaId) {
+      try {
+        const fromUrl = await fetchLockScreenFromUrl(config.lockScreenApiUrl.trim(), cachedUserServareaId);
+        const hasFromUrl =
+          (fromUrl.lockScreenBeforeTitle ?? fromUrl.lockScreenOffTitle ?? fromUrl.lockScreenLeaveTitle) != null;
+        if (hasFromUrl) {
+          const merged = { ...data } as Record<string, unknown>;
+          if (fromUrl.lockScreenBeforeTitle != null) merged.lockScreenBeforeTitle = fromUrl.lockScreenBeforeTitle;
+          if (fromUrl.lockScreenBeforeMessage != null) merged.lockScreenBeforeMessage = fromUrl.lockScreenBeforeMessage;
+          if (fromUrl.lockScreenOffTitle != null) merged.lockScreenOffTitle = fromUrl.lockScreenOffTitle;
+          if (fromUrl.lockScreenOffMessage != null) merged.lockScreenOffMessage = fromUrl.lockScreenOffMessage;
+          if (fromUrl.lockScreenLeaveTitle != null) merged.lockScreenLeaveTitle = fromUrl.lockScreenLeaveTitle;
+          if (fromUrl.lockScreenLeaveMessage != null) merged.lockScreenLeaveMessage = fromUrl.lockScreenLeaveMessage;
+          data = merged as WorkTimeResponse;
+          console.info("[PCOFF] 잠금화면 문구 — lockScreenApiUrl 적용됨");
+        }
+      } catch (e) {
+        console.info("[PCOFF] 잠금화면 문구 — lockScreenApiUrl 호출 실패:", String(e));
+      }
+    }
+    const ls = config.lockScreen;
+    if (ls) {
+      const merged = { ...data } as Record<string, unknown>;
+      let applied = false;
+      if (!merged.lockScreenBeforeTitle && ls.before?.title) {
+        merged.lockScreenBeforeTitle = ls.before.title;
+        if (ls.before.message) merged.lockScreenBeforeMessage = ls.before.message;
+        applied = true;
+      }
+      if (!merged.lockScreenOffTitle && ls.off?.title) {
+        merged.lockScreenOffTitle = ls.off.title;
+        if (ls.off.message) merged.lockScreenOffMessage = ls.off.message;
+        applied = true;
+      }
+      if (!merged.lockScreenLeaveTitle && ls.leave?.title) {
+        merged.lockScreenLeaveTitle = ls.leave.title;
+        if (ls.leave.message) merged.lockScreenLeaveMessage = ls.leave.message;
+        applied = true;
+      }
+      if (applied) {
+        data = merged as WorkTimeResponse;
+        console.info("[PCOFF] 잠금화면 문구 — config.json lockScreen 적용됨");
+      }
+    }
+  } else {
+    const ls = config.lockScreen;
+    if (ls) {
+      const merged = { ...data } as Record<string, unknown>;
+      let applied = false;
+      if (!merged.lockScreenBeforeTitle && ls.before?.title) {
+        merged.lockScreenBeforeTitle = ls.before.title;
+        if (ls.before.message) merged.lockScreenBeforeMessage = ls.before.message;
+        applied = true;
+      }
+      if (!merged.lockScreenOffTitle && ls.off?.title) {
+        merged.lockScreenOffTitle = ls.off.title;
+        if (ls.off.message) merged.lockScreenOffMessage = ls.off.message;
+        applied = true;
+      }
+      if (!merged.lockScreenLeaveTitle && ls.leave?.title) {
+        merged.lockScreenLeaveTitle = ls.leave.title;
+        if (ls.leave.message) merged.lockScreenLeaveMessage = ls.leave.message;
+        applied = true;
+      }
+      if (applied) data = merged as WorkTimeResponse;
+    }
+  }
+  return data;
+}
+
 /**
  * 잠금화면 (lock.html)
- * 로그인 창과 같은 창을 재사용해 새 창이 뜨지 않도록 함.
+ * 핫키/트레이로 열 때 문구 데이터를 먼저 불러온 뒤 로드해, 설정된 문구가 항상 적용되도록 함.
  */
-function createLockWindow(): void {
+async function createLockWindow(): Promise<void> {
+  // 잠금창을 띄우기 전에 근태·잠금화면 문구 선로드 (핫키로 잠글 때도 호출 보장)
+  const api = await getApiClient();
+  if (api) {
+    try {
+      const data = await fetchWorkTimeWithLockScreen(api);
+      lastWorkTimeData = data as Record<string, unknown>;
+      applyResolvedScreenType(lastWorkTimeData);
+      lastWorkTimeFetchedAt = new Date().toISOString();
+      leaveSeatDetector.updatePolicy({
+        leaveSeatUseYn: normalizeLeaveSeatUseYn(data.leaveSeatUseYn),
+        leaveSeatTimeMinutes: Number(data.leaveSeatTime ?? 0) || 0
+      });
+      emergencyUnlockManager?.updatePolicy({
+        unlockTimeMinutes: Number(data.emergencyUnlockTime ?? 0) || undefined,
+        maxFailures: Number(data.emergencyUnlockMaxFailures ?? 0) || undefined,
+        lockoutSeconds: Number(data.emergencyUnlockLockoutSeconds ?? 0) || undefined
+      });
+    } catch (e) {
+      console.info("[PCOFF] 잠금화면 문구 선로드 실패:", String(e));
+    }
+  }
+
   if (mainWindow && !mainWindow.isDestroyed()) {
     currentScreen = "lock";
     mainWindow.setSize(1040, 720);
@@ -381,9 +565,29 @@ function createLockWindow(): void {
   loadRendererInWindow(win, "lock.html");
 }
 
-/** 같은 창에 잠금 화면 로드 (로그인 → 잠금 전환 시 새 창 안 띄움) */
-function showLockInWindow(win: BrowserWindow): void {
+/** 같은 창에 잠금 화면 로드. 문구 데이터 선로드 후 로드 (핫키와 동일하게 호출 보장) */
+async function showLockInWindow(win: BrowserWindow): Promise<void> {
   if (win.isDestroyed()) return;
+  const api = await getApiClient();
+  if (api) {
+    try {
+      const data = await fetchWorkTimeWithLockScreen(api);
+      lastWorkTimeData = data as Record<string, unknown>;
+      applyResolvedScreenType(lastWorkTimeData);
+      lastWorkTimeFetchedAt = new Date().toISOString();
+      leaveSeatDetector.updatePolicy({
+        leaveSeatUseYn: normalizeLeaveSeatUseYn(data.leaveSeatUseYn),
+        leaveSeatTimeMinutes: Number(data.leaveSeatTime ?? 0) || 0
+      });
+      emergencyUnlockManager?.updatePolicy({
+        unlockTimeMinutes: Number(data.emergencyUnlockTime ?? 0) || undefined,
+        maxFailures: Number(data.emergencyUnlockMaxFailures ?? 0) || undefined,
+        lockoutSeconds: Number(data.emergencyUnlockLockoutSeconds ?? 0) || undefined
+      });
+    } catch {
+      // 선로드 실패 시 무시, getWorkTime에서 다시 시도
+    }
+  }
   mainWindow = win;
   currentScreen = "lock";
   win.setSize(1040, 720);
@@ -399,15 +603,15 @@ function showLockForLocalLeaveSeat(detectedAt: Date, reason: LeaveSeatDetectedRe
   localLeaveSeatReason = reason;
 
   if (mainWindow && !mainWindow.isDestroyed()) {
-    showLockInWindow(mainWindow);
-    mainWindow.show();
-    mainWindow.focus();
+    void showLockInWindow(mainWindow).then(() => {
+      mainWindow?.show();
+      mainWindow?.focus();
+    });
   } else {
-    createLockWindow();
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.show();
-      mainWindow.focus();
-    }
+    void createLockWindow().then(() => {
+      mainWindow?.show();
+      mainWindow?.focus();
+    });
   }
 }
 
@@ -418,9 +622,7 @@ async function doGlobalLogout(): Promise<void> {
   await clearLoginState(baseDir);
   lastWorkTimeData = {};
   lastWorkTimeFetchedAt = null;
-  cachedApiBaseUrl = null;
-  cachedUserServareaId = "";
-  cachedUserStaffId = "";
+  invalidateRuntimeConfigCache();
   await logger.write(LOG_CODES.LOGOUT, "INFO", { source: "globalShortcut" });
   createLoginWindow();
 }
@@ -537,7 +739,7 @@ function updateTrayMenu(): void {
     },
     {
       label: "잠금화면 열기",
-      click: () => createLockWindow()
+      click: () => void createLockWindow()
     },
     { type: "separator" },
     {
@@ -659,11 +861,11 @@ async function checkLockAndShowLockWindow(reuseWindow?: BrowserWindow | null): P
   else if (screenType === "off") void logger.write(LOG_CODES.SCREEN_TYPE_OFF, "INFO", {});
   else if (screenType === "empty") { /* 이석은 LEAVE_SEAT_* 로그로 기록됨 */ }
   if (reuseWindow && !reuseWindow.isDestroyed()) {
-    showLockInWindow(reuseWindow);
+    await showLockInWindow(reuseWindow);
     void logger.write(LOG_CODES.LOCK_TRIGGERED, "INFO", { reason: "usage_time_ended" });
     return true;
   }
-  createLockWindow();
+  void createLockWindow();
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.show();
     mainWindow.focus();
@@ -829,13 +1031,15 @@ app.whenReady().then(async () => {
     }
     if (state === "OFFLINE_GRACE" || state === "OFFLINE_LOCKED") {
       if (mainWindow && !mainWindow.isDestroyed()) {
-        showLockInWindow(mainWindow);
-        mainWindow.show();
-        mainWindow.focus();
+        void showLockInWindow(mainWindow).then(() => {
+          mainWindow?.show();
+          mainWindow?.focus();
+        });
       } else {
-        createLockWindow();
-        mainWindow?.show();
-        mainWindow?.focus();
+        void createLockWindow().then(() => {
+          mainWindow?.show();
+          mainWindow?.focus();
+        });
       }
     } else if (state === "ONLINE") {
       if (currentScreen === "lock") {
@@ -865,7 +1069,7 @@ app.whenReady().then(async () => {
   const hotkeys: [string, () => void][] = [
     ["CommandOrControl+Shift+L", () => void doGlobalLogout()],
     ["CommandOrControl+Shift+I", () => createTrayInfoWindow()],
-    ["CommandOrControl+Shift+K", () => createLockWindow()],
+    ["CommandOrControl+Shift+K", () => void createLockWindow()],
     ["Ctrl+Shift+Q", () => {
       isForceQuit = true;
       app.quit();
@@ -1029,6 +1233,7 @@ ipcMain.handle("pcoff:quitAndInstallUpdate", async () => {
   return { applied };
 });
 ipcMain.handle("pcoff:getUpdateStatus", async () => updater.getStatus());
+ipcMain.handle("pcoff:hasDownloadedUpdate", () => updater.hasDownloadedUpdate());
 ipcMain.handle("pcoff:getAppVersion", async () => updater.getAppVersion());
 ipcMain.handle("pcoff:getLogsPath", () => join(baseDir, PATHS.logsDir));
 ipcMain.handle("pcoff:openLogsFolder", async () => {
@@ -1128,12 +1333,12 @@ ipcMain.handle("pcoff:logout", async () => {
   await clearLoginState(baseDir);
   lastWorkTimeData = {};
   lastWorkTimeFetchedAt = null;
-  cachedApiBaseUrl = null;
-  cachedUserServareaId = "";
-  cachedUserStaffId = "";
+  invalidateRuntimeConfigCache();
   await logger.write(LOG_CODES.LOGOUT, "INFO", {});
   return { success: true };
 });
+const RECENT_WORKTIME_CACHE_MS = 2500;
+
 ipcMain.handle("pcoff:getWorkTime", async () => {
   const api = await getApiClient();
   if (!api) {
@@ -1146,10 +1351,20 @@ ipcMain.handle("pcoff:getWorkTime", async () => {
     return { source: "mock", data: mockData };
   }
 
+  // 핫키/잠금창 오픈 시 선로드한 캐시가 있으면 재호출 없이 반환 (문구 데이터 호출 보장)
+  if (lastWorkTimeFetchedAt) {
+    const age = Date.now() - new Date(lastWorkTimeFetchedAt).getTime();
+    if (age >= 0 && age < RECENT_WORKTIME_CACHE_MS) {
+      const merged = { ...lastWorkTimeData } as Record<string, unknown>;
+      if (localLeaveSeatDetectedAt) merged.leaveSeatOffInputMath = formatYmdHm(localLeaveSeatDetectedAt);
+      merged.screenType = resolveScreenType(merged, new Date(), !!localLeaveSeatDetectedAt);
+      return { source: "api", data: merged };
+    }
+  }
+
   try {
-    const data = await api.getPcOffWorkTime();
-    
-    // 캐시 업데이트 (FR-13: exCountRenewal 기준 시업/종업 화면 타입 반영)
+    const data = await fetchWorkTimeWithLockScreen(api);
+
     lastWorkTimeData = data as Record<string, unknown>;
     applyResolvedScreenType(lastWorkTimeData);
     lastWorkTimeFetchedAt = new Date().toISOString();
@@ -1176,10 +1391,8 @@ ipcMain.handle("pcoff:getWorkTime", async () => {
       emergencyUnlockTime: data.emergencyUnlockTime
     });
 
-    // FR-04: 비밀번호 변경 감지
     if (data.pwdChgYn === "Y") {
       await authPolicy.onPasswordChangeDetected("getPcOffWorkTime", data.pwdChgMsg);
-      // Renderer에 비밀번호 변경 이벤트 전송 (모든 창에)
       const windows = mainWindow && !mainWindow.isDestroyed() ? [mainWindow] : [];
       for (const win of windows) {
         win?.webContents.send("pcoff:password-change-detected", {
@@ -1198,6 +1411,27 @@ ipcMain.handle("pcoff:getWorkTime", async () => {
     if (localLeaveSeatDetectedAt) {
       fallbackData.screenType = "empty";
       fallbackData.leaveSeatOffInputMath = formatYmdHm(localLeaveSeatDetectedAt);
+    }
+    // API 실패 시에도 config.json 잠금화면 문구 적용
+    try {
+      const config = await readJson<{
+        lockScreen?: {
+          before?: { title?: string; message?: string };
+          off?: { title?: string; message?: string };
+          leave?: { title?: string; message?: string };
+        };
+      }>(join(baseDir, PATHS.config), {});
+      const ls = config.lockScreen;
+      if (ls) {
+        if (ls.before?.title) fallbackData.lockScreenBeforeTitle = ls.before.title;
+        if (ls.before?.message) fallbackData.lockScreenBeforeMessage = ls.before.message;
+        if (ls.off?.title) fallbackData.lockScreenOffTitle = ls.off.title;
+        if (ls.off?.message) fallbackData.lockScreenOffMessage = ls.off.message;
+        if (ls.leave?.title) fallbackData.lockScreenLeaveTitle = ls.leave.title;
+        if (ls.leave?.message) fallbackData.lockScreenLeaveMessage = ls.leave.message;
+      }
+    } catch {
+      // ignore
     }
     return { source: "fallback", data: fallbackData, error: String(error) };
   }
@@ -1398,7 +1632,7 @@ ipcMain.handle("pcoff:checkLockAndShow", async (event) => {
 
 // 수동으로 잠금화면 창 열기 (트레이 메뉴 등)
 ipcMain.handle("pcoff:openLockWindow", async () => {
-  createLockWindow();
+  await createLockWindow();
   return { success: true };
 });
 

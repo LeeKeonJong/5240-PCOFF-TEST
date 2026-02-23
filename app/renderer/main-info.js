@@ -46,7 +46,7 @@ function showToast(text) {
 /** 현재 업데이트 상태 (버튼 클릭 시 '지금 재시작' vs '업데이트 확인' 분기용) */
 let lastUpdateStatus = { state: "idle" };
 
-/** 업데이트 확인 결과에 따라 버튼 텍스트·토스트 표시 */
+/** 업데이트 확인 결과에 따라 버튼 텍스트·토스트 표시. downloaded일 때는 Main에 실제 대기 중인 업데이트가 있을 때만 '지금 재시작' 표시 */
 function updateCheckButton(status) {
   if (!checkUpdateEl) return;
   if (status) lastUpdateStatus = status;
@@ -65,15 +65,33 @@ function updateCheckButton(status) {
       checkUpdateEl.disabled = true;
       break;
     case "downloaded":
-      checkUpdateEl.textContent = "지금 재시작";
-      checkUpdateEl.disabled = false;
-      showToast("업데이트 다운로드 완료. '지금 재시작'을 눌러 적용하세요.");
+      if (window.pcoffApi?.hasDownloadedUpdate) {
+        window.pcoffApi.hasDownloadedUpdate().then((has) => {
+          if (has && checkUpdateEl) {
+            checkUpdateEl.textContent = "지금 재시작";
+            checkUpdateEl.disabled = false;
+            showToast("업데이트 다운로드 완료. '지금 재시작'을 눌러 적용하세요.");
+          } else {
+            lastUpdateStatus = { state: "idle" };
+            if (checkUpdateEl) {
+              checkUpdateEl.textContent = "업데이트 확인";
+              checkUpdateEl.disabled = false;
+            }
+          }
+        });
+      } else {
+        checkUpdateEl.textContent = "지금 재시작";
+        checkUpdateEl.disabled = false;
+        showToast("업데이트 다운로드 완료. '지금 재시작'을 눌러 적용하세요.");
+      }
       break;
     case "not-available":
       checkUpdateEl.textContent = "최신 버전";
       checkUpdateEl.disabled = false;
       showToast("현재 최신 버전입니다.");
-      setTimeout(() => { checkUpdateEl.textContent = "업데이트 확인"; }, 3000);
+      setTimeout(() => {
+        if (checkUpdateEl) checkUpdateEl.textContent = "업데이트 확인";
+      }, 3000);
       break;
     case "error":
       checkUpdateEl.textContent = "업데이트 오류";
@@ -200,44 +218,45 @@ async function loadVersionInfo() {
   }
 }
 
+/** 캐시된 작동정보만 채움 (API 호출 없음). 반환: 성공 여부 */
 async function loadTrayOperationInfo() {
-  if (window.pcoffApi?.getTrayOperationInfo) {
-    try {
-      const info = await window.pcoffApi.getTrayOperationInfo();
-      if (info) {
-        setMode(info.mode || "NORMAL");
-        if (info.reflectedAttendance) {
-          if (reflectedTimeEl && info.reflectedAttendance.basedAt) {
-            reflectedTimeEl.textContent = `기준: ${formatDateTime(info.reflectedAttendance.basedAt)}`;
-          }
-          if (appliedPolicyEl && info.reflectedAttendance.appliedPolicy) {
-            appliedPolicyEl.textContent = info.reflectedAttendance.appliedPolicy;
-          }
-        }
-        if (info.myAttendance) {
-          updateAttendanceInfo(info.myAttendance);
-          // 현재 반영 근태정보 섹션도 동일 데이터로 채움 (PC 사용 가능, 시업/종업 시간)
-          updateReflectedInfo(info.myAttendance);
-        }
-        if (info.versionInfo) {
-          const verText = `v${info.versionInfo.appVersion}`;
-          if (versionAppEl) versionAppEl.textContent = verText;
-          if (versionSummaryEl) versionSummaryEl.textContent = verText;
-          if (versionUpdatedEl) versionUpdatedEl.textContent = formatDateTime(info.versionInfo.lastUpdatedAt);
-        }
-        return;
+  if (!window.pcoffApi?.getTrayOperationInfo) return false;
+  try {
+    const info = await window.pcoffApi.getTrayOperationInfo();
+    if (!info) return false;
+    setMode(info.mode || "NORMAL");
+    if (info.reflectedAttendance) {
+      if (reflectedTimeEl && info.reflectedAttendance.basedAt) {
+        reflectedTimeEl.textContent = `기준: ${formatDateTime(info.reflectedAttendance.basedAt)}`;
       }
-    } catch (e) {
-      console.warn("getTrayOperationInfo failed, fallback to getWorkTime:", e);
+      if (appliedPolicyEl && info.reflectedAttendance.appliedPolicy) {
+        appliedPolicyEl.textContent = info.reflectedAttendance.appliedPolicy;
+      }
     }
+    if (info.myAttendance) {
+      updateAttendanceInfo(info.myAttendance);
+      updateReflectedInfo(info.myAttendance);
+    }
+    if (info.versionInfo) {
+      const verText = `v${info.versionInfo.appVersion}`;
+      if (versionAppEl) versionAppEl.textContent = verText;
+      if (versionSummaryEl) versionSummaryEl.textContent = verText;
+      if (versionUpdatedEl) versionUpdatedEl.textContent = formatDateTime(info.versionInfo.lastUpdatedAt);
+    }
+    return true;
+  } catch (e) {
+    console.warn("getTrayOperationInfo failed:", e);
+    return false;
   }
-
-  // Fallback to getWorkTime
-  await refreshAttendance();
 }
 
+/** 새로고침 중복 클릭 방지 */
+let refreshInProgress = false;
+
 async function refreshAttendance(options = {}) {
-  const { silent = false } = options; // 초기 로드 시 토스트 생략
+  const { silent = false } = options;
+  if (refreshInProgress) return;
+  refreshInProgress = true;
   if (refreshAttendanceEl) {
     refreshAttendanceEl.disabled = true;
     refreshAttendanceEl.textContent = "조회 중...";
@@ -260,6 +279,7 @@ async function refreshAttendance(options = {}) {
     updateAttendanceInfo({}, true);
     if (!silent) showToast("근태정보 조회 실패");
   } finally {
+    refreshInProgress = false;
     if (refreshAttendanceEl) {
       refreshAttendanceEl.disabled = false;
       refreshAttendanceEl.textContent = "새로고침";
@@ -281,16 +301,24 @@ async function init() {
 
   await loadUserInfo();
   await loadVersionInfo();
-  // 화면 오픈 시 근태정보가 바로 보이도록 먼저 서버에서 조회
-  await refreshAttendance({ silent: true });
-  await loadTrayOperationInfo();
+  // 캐시된 작동정보를 먼저 표시해 화면을 빠르게 채운 뒤, 백그라운드에서 서버 갱신
+  const cached = await loadTrayOperationInfo();
+  if (!cached) {
+    await refreshAttendance({ silent: true });
+  } else {
+    void refreshAttendance({ silent: true });
+  }
 
   refreshAttendanceEl?.addEventListener("click", () => refreshAttendance({ silent: false }));
   setupModeChangeListener();
 
-  // 업데이트 확인 버튼 (작동정보 화면) — 다운로드 완료 시 '지금 재시작'으로 즉시 적용
-  if (checkUpdateEl && window.pcoffApi?.requestUpdateCheck) {
+  // 업데이트 확인 버튼 (작동정보 화면) — 버튼이 있으면 항상 리스너 부착, 클릭 시 즉시 피드백 후 API 호출
+  if (checkUpdateEl) {
     checkUpdateEl.addEventListener("click", async () => {
+      if (!window.pcoffApi?.requestUpdateCheck) {
+        showToast("업데이트 확인을 사용할 수 없습니다.");
+        return;
+      }
       if (lastUpdateStatus?.state === "downloaded" && window.pcoffApi.quitAndInstallUpdate) {
         try {
           const result = await window.pcoffApi.quitAndInstallUpdate();
@@ -299,6 +327,9 @@ async function init() {
             checkUpdateEl.disabled = true;
             showToast("앱을 종료하고 업데이트를 적용합니다.");
           } else {
+            lastUpdateStatus = { state: "idle" };
+            checkUpdateEl.textContent = "업데이트 확인";
+            checkUpdateEl.disabled = false;
             showToast("적용할 업데이트가 없습니다.");
           }
         } catch (e) {
@@ -310,8 +341,18 @@ async function init() {
       checkUpdateEl.disabled = true;
       checkUpdateEl.textContent = "확인 중...";
       try {
-        const status = await window.pcoffApi.requestUpdateCheck();
+        let status = await window.pcoffApi.requestUpdateCheck();
         updateCheckButton(status);
+        if (status?.state === "checking" && window.pcoffApi.getUpdateStatus) {
+          await new Promise((r) => setTimeout(r, 600));
+          status = await window.pcoffApi.getUpdateStatus();
+          updateCheckButton(status);
+        }
+        if (status?.state === "idle" && checkUpdateEl) {
+          checkUpdateEl.textContent = "업데이트 확인";
+          checkUpdateEl.disabled = false;
+          showToast("현재 최신 버전입니다.");
+        }
       } catch (e) {
         console.warn("requestUpdateCheck failed", e);
         showToast("업데이트 확인 오류");
@@ -319,28 +360,33 @@ async function init() {
         checkUpdateEl.textContent = "업데이트 확인";
       }
     });
-    if (window.pcoffApi.getUpdateStatus) {
+    if (window.pcoffApi?.getUpdateStatus) {
       window.pcoffApi.getUpdateStatus().then((status) => {
         if (status?.state === "downloaded") updateCheckButton(status);
       });
     }
-    if (window.pcoffApi.onUpdateProgress) {
+    if (window.pcoffApi?.onUpdateProgress) {
       window.pcoffApi.onUpdateProgress((data) => {
         if (checkUpdateEl && data) updateCheckButton(data);
       });
     }
   }
 
-  // 로그 폴더 열기
+  // 로그 폴더 열기 (연속 클릭 시 한 번만 실행)
   const openLogsFolderEl = document.getElementById("open-logs-folder");
   if (openLogsFolderEl && window.pcoffApi?.openLogsFolder) {
+    let openLogsPending = false;
     openLogsFolderEl.addEventListener("click", async () => {
+      if (openLogsPending) return;
+      openLogsPending = true;
       try {
         await window.pcoffApi.openLogsFolder();
         showToast("로그 폴더를 열었습니다.");
       } catch (e) {
         console.warn("openLogsFolder failed", e);
         showToast("로그 폴더를 열 수 없습니다.");
+      } finally {
+        setTimeout(() => { openLogsPending = false; }, 800);
       }
     });
   }
