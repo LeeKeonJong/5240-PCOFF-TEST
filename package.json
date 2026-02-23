@@ -1,11 +1,11 @@
 {
   "name": "pcoff-electron-agent",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "private": true,
   "description": "5240 PcOff Agent Electron scaffold",
   "repository": {
     "type": "git",
-    "url": "https://github.com/LeeKeonJong/PCOFF_TEST.git"
+    "url": "https://github.com/LeeKeonJong/5240-PCOFF-TEST.git"
   },
   "main": "dist/app/main/index.js",
   "type": "module",
@@ -83,7 +83,7 @@
     "publish": {
       "provider": "github",
       "owner": "LeeKeonJong",
-      "repo": "PCOFF_TEST"
+      "repo": "5240-PCOFF-TEST"
     }
   }
 }

@@ -32,6 +32,8 @@ import {
   saveLoginState,
   clearLoginState,
   getLoginUserDisplay,
+  saveTempExtendState,
+  loadTempExtendState,
   type RuntimeConfig
 } from "../core/runtime-config.js";
 import {
@@ -162,6 +164,8 @@ type ActionResult = {
   success: boolean;
   data?: unknown;
   error?: string;
+  /** PC-ON 성공했으나 아직 시업 전 등으로 잠금 유지 시 true. 잠금화면에서 "불가" 메시지 표시용 */
+  stillLocked?: boolean;
 };
 
 async function getApiClient(): Promise<PcOffApiClient | null> {
@@ -278,7 +282,7 @@ function attachWindowHotkeys(win: BrowserWindow): void {
     const key = input.key?.toLowerCase();
     if (key === "i") {
       event.preventDefault();
-      void createTrayInfoWindow();
+      showTrayInfoInCurrentWindow();
     } else if (key === "k") {
       event.preventDefault();
       void createLockWindow();
@@ -292,6 +296,28 @@ function attachWindowHotkeys(win: BrowserWindow): void {
       app.quit();
     }
   });
+}
+
+/**
+ * 현재 창을 작동정보(main.html)로 전환만 함. 잠금 검사 없음.
+ * 임시연장/긴급사용 성공 직후 같은 창에서 에이전트 화면으로 돌아가기 위해 사용.
+ */
+function showTrayInfoInCurrentWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    void createTrayInfoWindow();
+    return;
+  }
+  currentScreen = "tray-info";
+  mainWindow.setSize(620, 840);
+  mainWindow.setTitle("PCOFF 작동정보");
+  mainWindow.show();
+  mainWindow.focus();
+  if (process.platform === "win32") {
+    mainWindow.setAlwaysOnTop(true);
+    mainWindow.setAlwaysOnTop(false);
+    mainWindow.focus();
+  }
+  loadRendererInWindow(mainWindow, "main.html");
 }
 
 /**
@@ -796,10 +822,21 @@ function setOperationMode(mode: OperationMode): void {
  * - 현재 시각 >= pcOffYmdTime → 잠금(종업 후)
  * - pcOnYmdTime <= 현재 시각 < pcOffYmdTime → 잠금 해제(사용 가능)
  * (pcOnYn은 해당 일자의 PC 사용 가능 여부일 뿐, 실시간 잠금 기준이 아님)
+ * 임시연장(TEMP_EXTEND) 중에는 연장된 pcOffYmdTime 시각이 지나기 전까지 로컬 lastWorkTimeData로만 판단(서버 반영 지연 시에도 60분 유지).
  */
 async function isLockRequired(): Promise<boolean> {
   // FR-15: 긴급해제 활성 중이면 잠금 스킵
   if (emergencyUnlockManager?.isActive) return false;
+
+  const now = new Date();
+  if (currentMode === "TEMP_EXTEND" && Object.keys(lastWorkTimeData).length > 0) {
+    const pcOnTime = parseYmdHm(String(lastWorkTimeData.pcOnYmdTime ?? ""));
+    const pcOffTime = parseYmdHm(String(lastWorkTimeData.pcOffYmdTime ?? ""));
+    if (pcOnTime && pcOffTime && now < pcOffTime) {
+      const locked = now < pcOnTime || now >= pcOffTime;
+      return locked;
+    }
+  }
 
   const api = await getApiClient();
   if (!api) {
@@ -846,13 +883,16 @@ async function isLockRequired(): Promise<boolean> {
     }
     // 파싱 불가 시 기존 pcOnYn fallback (하위 호환)
     return data.pcOnYn === "N";
-  } catch {
-    void offlineManager.reportApiFailure("api");
+  } catch (err) {
+    // 서버 HTTP 4xx/5xx는 통신 성공 → 오프라인 아님. 네트워크 오류일 때만 오프라인으로 보고
+    const msg = err instanceof Error ? err.message : String(err);
+    const isHttpError = /\bfailed:\s*[45]\d{2}\b/.test(msg);
+    if (!isHttpError) void offlineManager.reportApiFailure("api");
     return false;
   }
 }
 
-/** 잠금 필요 시 잠금화면 표시. reuseWindow 있으면 그 창에 로드(새 창 X) */
+/** 잠금 필요 시 잠금화면 표시. reuseWindow 있으면 그 창에 로드(새 창 X). 이미 잠금화면이면 reload 하지 않음(팝업 유지). */
 async function checkLockAndShowLockWindow(reuseWindow?: BrowserWindow | null): Promise<boolean> {
   const locked = await isLockRequired();
   if (!locked) return false;
@@ -861,8 +901,14 @@ async function checkLockAndShowLockWindow(reuseWindow?: BrowserWindow | null): P
   else if (screenType === "off") void logger.write(LOG_CODES.SCREEN_TYPE_OFF, "INFO", {});
   else if (screenType === "empty") { /* 이석은 LEAVE_SEAT_* 로그로 기록됨 */ }
   if (reuseWindow && !reuseWindow.isDestroyed()) {
+    if (currentScreen === "lock" && mainWindow === reuseWindow) {
+      return true;
+    }
     await showLockInWindow(reuseWindow);
     void logger.write(LOG_CODES.LOCK_TRIGGERED, "INFO", { reason: "usage_time_ended" });
+    return true;
+  }
+  if (currentScreen === "lock" && mainWindow && !mainWindow.isDestroyed()) {
     return true;
   }
   void createLockWindow();
@@ -877,11 +923,30 @@ async function checkLockAndShowLockWindow(reuseWindow?: BrowserWindow | null): P
 let lockCheckIntervalId: ReturnType<typeof setInterval> | null = null;
 const LOCK_CHECK_INTERVAL_MS = 60_000; // 1분
 
+/** 재시작 후 state.json에 저장된 임시연장이 만료 전이면 lastWorkTimeData·currentMode 복원 */
+async function restoreTempExtendState(): Promise<void> {
+  const loaded = await loadTempExtendState(baseDir);
+  if (!loaded) return;
+  const untilTime = parseYmdHm(loaded.until);
+  if (!untilTime || untilTime <= new Date()) return;
+  lastWorkTimeData = { ...loaded.snapshot };
+  applyResolvedScreenType(lastWorkTimeData);
+  lastWorkTimeFetchedAt = new Date().toISOString();
+  setOperationMode("TEMP_EXTEND");
+}
+
+let lockCheckRestorePending = false;
 function startLockCheckInterval(): void {
-  if (lockCheckIntervalId) return;
-  lockCheckIntervalId = setInterval(() => {
-    void checkLockAndShowLockWindow();
-  }, LOCK_CHECK_INTERVAL_MS);
+  if (lockCheckIntervalId || lockCheckRestorePending) return;
+  lockCheckRestorePending = true;
+  void (async () => {
+    await restoreTempExtendState();
+    lockCheckRestorePending = false;
+    if (lockCheckIntervalId) return;
+    lockCheckIntervalId = setInterval(() => {
+      void checkLockAndShowLockWindow(mainWindow ?? undefined);
+    }, LOCK_CHECK_INTERVAL_MS);
+  })();
 }
 
 function stopLockCheckInterval(): void {
@@ -1065,10 +1130,10 @@ app.whenReady().then(async () => {
     console.error("[PCOFF] Tray creation failed:", err);
   }
 
-  // 전역 핫키 (설치 앱: macOS는 손쉬운 사용 허용 필요, Windows는 앱 포커스/관리자 권한에 따라 동작)
+  // 개발자용 전역 핫키 — 강제로 등록. macOS: 손쉬운 사용 허용 필요, Windows: 앱 포커스 없어도 동작하도록 즉시+지연 재등록
   const hotkeys: [string, () => void][] = [
     ["CommandOrControl+Shift+L", () => void doGlobalLogout()],
-    ["CommandOrControl+Shift+I", () => createTrayInfoWindow()],
+    ["CommandOrControl+Shift+I", () => showTrayInfoInCurrentWindow()],
     ["CommandOrControl+Shift+K", () => void createLockWindow()],
     ["Ctrl+Shift+Q", () => {
       isForceQuit = true;
@@ -1078,6 +1143,7 @@ app.whenReady().then(async () => {
   const registerHotkeys = () => {
     for (const [accel, fn] of hotkeys) {
       try {
+        globalShortcut.unregister(accel);
         const ok = globalShortcut.register(accel, fn);
         if (ok) console.info("[PCOFF] 핫키 등록:", accel);
         else console.warn("[PCOFF] 핫키 등록 실패(이미 사용 중?):", accel);
@@ -1086,11 +1152,9 @@ app.whenReady().then(async () => {
       }
     }
   };
-  // Windows: 시작 직후 다른 앱이 포커스를 잡아 핫키가 동작하지 않을 수 있으므로 짧은 지연 후 등록
+  registerHotkeys();
   if (process.platform === "win32") {
-    setTimeout(registerHotkeys, 400);
-  } else {
-    registerHotkeys();
+    setTimeout(registerHotkeys, 500);
   }
 
   // 로그인 상태 확인 후 적절한 창 열기
@@ -1365,6 +1429,41 @@ ipcMain.handle("pcoff:getWorkTime", async () => {
   try {
     const data = await fetchWorkTimeWithLockScreen(api);
 
+    // 임시연장 중 연장 만료 시각이 아직 미래면 서버 재조회로 lastWorkTimeData 덮어쓰지 않음 (재조회 시 다시 잠금 방지)
+    if (
+      currentMode === "TEMP_EXTEND" &&
+      Object.keys(lastWorkTimeData).length > 0
+    ) {
+      const extendedEnd = parseYmdHm(String(lastWorkTimeData.pcOffYmdTime ?? ""));
+      if (extendedEnd && extendedEnd > new Date()) {
+        leaveSeatDetector.updatePolicy({
+          leaveSeatUseYn: normalizeLeaveSeatUseYn(data.leaveSeatUseYn),
+          leaveSeatTimeMinutes: Number(data.leaveSeatTime ?? 0) || 0
+        });
+        emergencyUnlockManager?.updatePolicy({
+          unlockTimeMinutes: Number(data.emergencyUnlockTime ?? 0) || undefined,
+          maxFailures: Number(data.emergencyUnlockMaxFailures ?? 0) || undefined,
+          lockoutSeconds: Number(data.emergencyUnlockLockoutSeconds ?? 0) || undefined
+        });
+        const merged = { ...data } as Record<string, unknown>;
+        merged.pcOffYmdTime = lastWorkTimeData.pcOffYmdTime;
+        merged.pcExCount = lastWorkTimeData.pcExCount;
+        if (localLeaveSeatDetectedAt) merged.leaveSeatOffInputMath = formatYmdHm(localLeaveSeatDetectedAt);
+        merged.screenType = resolveScreenType(merged, new Date(), !!localLeaveSeatDetectedAt);
+        lastWorkTimeFetchedAt = new Date().toISOString();
+        if (data.pwdChgYn === "Y") {
+          await authPolicy.onPasswordChangeDetected("getPcOffWorkTime", data.pwdChgMsg);
+          const windows = mainWindow && !mainWindow.isDestroyed() ? [mainWindow] : [];
+          for (const win of windows) {
+            win?.webContents.send("pcoff:password-change-detected", {
+              message: data.pwdChgMsg || "비밀번호가 변경되었습니다. 확인 버튼을 눌러주세요.",
+            });
+          }
+        }
+        return { source: "api", data: merged };
+      }
+    }
+
     lastWorkTimeData = data as Record<string, unknown>;
     applyResolvedScreenType(lastWorkTimeData);
     lastWorkTimeFetchedAt = new Date().toISOString();
@@ -1445,13 +1544,40 @@ ipcMain.handle("pcoff:requestPcExtend", async (_event, payload: { pcOffYmdTime?:
     const currentCount = Number(lastWorkTimeData?.pcExCount ?? 0);
     const extCount = currentCount + 1;
     const data = await api.callPcOffTempDelay(pcOffYmdTime, extCount);
-    await logger.write(LOG_CODES.UNLOCK_TRIGGERED, "INFO", { action: "pc_extend", pcOffYmdTime, extCount });
+    console.info("[PCOFF] callPcOffTempDelay 응답:", JSON.stringify(data));
+    await logger.write(LOG_CODES.UNLOCK_TRIGGERED, "INFO", {
+      action: "pc_extend",
+      pcOffYmdTime,
+      extCount,
+      callPcOffTempDelayResponse: data
+    });
     setOperationMode("TEMP_EXTEND");
     const workTime = await api.getPcOffWorkTime();
-    lastWorkTimeData = workTime as unknown as Record<string, unknown>;
+    const wt = workTime as Record<string, unknown>;
+    console.info("[PCOFF] 직후 getPcOffWorkTime 응답 (서버 반영 확인용):", {
+      pcExCount: wt.pcExCount,
+      pcOffYmdTime: wt.pcOffYmdTime,
+      pcOnYmdTime: wt.pcOnYmdTime
+    });
+    await logger.write(LOG_CODES.UNLOCK_TRIGGERED, "INFO", {
+      action: "getPcOffWorkTime_after_extend",
+      pcExCount: wt.pcExCount,
+      pcOffYmdTime: wt.pcOffYmdTime
+    });
+    const now = new Date();
+    let merged = { ...workTime, pcExCount: extCount } as Record<string, unknown>;
+    const pcOffParsed = parseYmdHm(String(merged.pcOffYmdTime ?? ""));
+    const pcExTimeMin = Number(merged.pcExTime ?? 60) || 60;
+    if (!pcOffParsed || pcOffParsed <= now) {
+      const extendedEnd = new Date(now.getTime() + pcExTimeMin * 60 * 1000);
+      merged.pcOffYmdTime = formatYmdHm(extendedEnd);
+    }
+    lastWorkTimeData = merged;
     applyResolvedScreenType(lastWorkTimeData);
     lastWorkTimeFetchedAt = new Date().toISOString();
-    createTrayInfoWindow();
+    const untilYmdHm = String(merged.pcOffYmdTime ?? "");
+    if (untilYmdHm) void saveTempExtendState(baseDir, { ...merged }, untilYmdHm);
+    showTrayInfoInCurrentWindow();
     return { source: "api", success: true, data: workTime };
   } catch (error) {
     await logger.write(LOG_CODES.OFFLINE_DETECTED, "WARN", { step: "callPcOffTempDelay", error: String(error) });
@@ -1469,7 +1595,7 @@ ipcMain.handle("pcoff:requestEmergencyUse", async (_event, payload: { reason?: s
     });
     await logger.write(LOG_CODES.UNLOCK_TRIGGERED, "INFO", { action: "emergency_use" });
     // 긴급사용 성공 시 잠금 해제 → 작동정보 화면으로 전환
-    createTrayInfoWindow();
+    showTrayInfoInCurrentWindow();
     return { source: "api", success: true, data };
   } catch (error) {
     await logger.write(LOG_CODES.OFFLINE_DETECTED, "WARN", { step: "callPcOffEmergencyUse", error: String(error) });
@@ -1492,7 +1618,7 @@ ipcMain.handle(
         reason: payload.reason,
         emergencyYn: "N"
       });
-      // PC-ON 시 잠금화면 → 작동정보 화면으로 전환
+      // PC-ON 시: 서버에 IN 기록 후 근태 갱신. 잠금 해제되면 에이전트 화면으로 전환, 여전히 잠금이면 stillLocked 반환(잠금화면에서 불가 메시지 표시)
       if (payload.tmckButnCd === "IN") {
         if (payload.isLeaveSeat) {
           const hasReason = Boolean(payload.reason?.trim());
@@ -1514,7 +1640,20 @@ ipcMain.handle(
           localLeaveSeatDetectedAt = null;
           localLeaveSeatReason = null;
         }
-        createTrayInfoWindow();
+        const fresh = await api.getPcOffWorkTime();
+        lastWorkTimeData = fresh as unknown as Record<string, unknown>;
+        applyResolvedScreenType(lastWorkTimeData);
+        lastWorkTimeFetchedAt = new Date().toISOString();
+        const pcOnT = parseYmdHm(fresh.pcOnYmdTime);
+        const pcOffT = parseYmdHm(fresh.pcOffYmdTime);
+        const now = new Date();
+        const locked =
+          pcOnT && pcOffT ? now < pcOnT || now >= pcOffT : (fresh.pcOnYn === "N");
+        if (!locked) {
+          showTrayInfoInCurrentWindow();
+          return { source: "api", success: true, data };
+        }
+        return { source: "api", success: true, data, stillLocked: true };
       }
       return { source: "api", success: true, data };
     } catch (error) {
@@ -1593,6 +1732,22 @@ ipcMain.handle("pcoff:refreshMyAttendance", async () => {
 
   try {
     const data = await api.getPcOffWorkTime();
+    // 임시연장 중 연장 만료 시각이 아직 미래면 서버 응답으로 덮어쓰지 않음 (조회 시 다시 잠금·카운트 초기화 방지)
+    if (
+      currentMode === "TEMP_EXTEND" &&
+      Object.keys(lastWorkTimeData).length > 0
+    ) {
+      const extendedEnd = parseYmdHm(String(lastWorkTimeData.pcOffYmdTime ?? ""));
+      if (extendedEnd && extendedEnd > new Date()) {
+        lastWorkTimeFetchedAt = new Date().toISOString();
+        const merged = { ...data } as Record<string, unknown>;
+        merged.pcOffYmdTime = lastWorkTimeData.pcOffYmdTime;
+        merged.pcExCount = lastWorkTimeData.pcExCount;
+        merged.screenType = resolveScreenType(merged, new Date(), !!localLeaveSeatDetectedAt);
+        await logger.write(LOG_CODES.TRAY_ATTENDANCE_REFRESHED, "INFO", {});
+        return merged;
+      }
+    }
     lastWorkTimeData = data as unknown as Record<string, unknown>;
     applyResolvedScreenType(lastWorkTimeData);
     lastWorkTimeFetchedAt = new Date().toISOString();

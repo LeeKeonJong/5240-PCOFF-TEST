@@ -18,6 +18,8 @@ export type OfflineStateChangeCallback = (state: ConnectivityState) => void;
 
 const HEARTBEAT_FAIL_THRESHOLD = 3;
 const API_FAIL_THRESHOLD = 2;
+/** 오프라인 유예/잠금에서 복구 시 요구하는 연속 성공 횟수 (잦은 온오프 방지) */
+const CONSECUTIVE_SUCCESS_THRESHOLD = 2;
 const GRACE_PERIOD_MS = 30 * 60_000; // 30분
 
 const EMPTY_SNAPSHOT: OfflineStateSnapshot = {
@@ -33,6 +35,8 @@ export class OfflineManager {
   private snapshot: OfflineStateSnapshot = { ...EMPTY_SNAPSHOT };
   private heartbeatFailCount = 0;
   private apiFailCount = 0;
+  /** 오프라인 상태에서 ONLINE 복구 시 연속 성공 카운트 */
+  private consecutiveSuccessCount = 0;
   private graceTimer?: ReturnType<typeof setTimeout>;
   private onStateChange?: OfflineStateChangeCallback;
   private readonly stateFilePath: string;
@@ -94,12 +98,27 @@ export class OfflineManager {
     await this.transitionTo("OFFLINE_GRACE");
   }
 
-  /** API 성공 시 온라인으로 복귀 */
-  async reportApiSuccess(): Promise<void> {
+  /**
+   * API 성공 시 온라인으로 복귀.
+   * 이미 ONLINE이면 실패 카운트만 초기화.
+   * OFFLINE_GRACE/OFFLINE_LOCKED일 때는 연속 성공 N회 필요(잦은 모달 반복 방지).
+   * @param forceRecover true면 연속 성공 없이 즉시 ONLINE (예: 수동 "다시 시도" 성공 시)
+   */
+  async reportApiSuccess(forceRecover = false): Promise<void> {
+    if (this.snapshot.state === "ONLINE") {
+      this.heartbeatFailCount = 0;
+      this.apiFailCount = 0;
+      this.consecutiveSuccessCount = 0;
+      return;
+    }
+
+    this.consecutiveSuccessCount++;
+    if (!forceRecover && this.consecutiveSuccessCount < CONSECUTIVE_SUCCESS_THRESHOLD) {
+      return;
+    }
     this.heartbeatFailCount = 0;
     this.apiFailCount = 0;
-
-    if (this.snapshot.state === "ONLINE") return;
+    this.consecutiveSuccessCount = 0;
     await this.transitionTo("ONLINE");
   }
 
@@ -117,7 +136,7 @@ export class OfflineManager {
     try {
       const online = await healthCheckFn();
       if (online) {
-        await this.reportApiSuccess();
+        await this.reportApiSuccess(true);
         return true;
       }
     } catch {
@@ -136,6 +155,7 @@ export class OfflineManager {
 
     switch (next) {
       case "OFFLINE_GRACE": {
+        this.consecutiveSuccessCount = 0;
         const now = new Date();
         this.snapshot.state = "OFFLINE_GRACE";
         this.snapshot.offlineSince = now.toISOString();
@@ -152,6 +172,7 @@ export class OfflineManager {
         break;
       }
       case "OFFLINE_LOCKED": {
+        this.consecutiveSuccessCount = 0;
         this.clearGraceTimer();
         this.snapshot.state = "OFFLINE_LOCKED";
         this.snapshot.locked = true;

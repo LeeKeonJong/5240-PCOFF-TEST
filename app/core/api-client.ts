@@ -427,10 +427,19 @@ export interface AgentEventPayload {
   sessionId: string;
 }
 
+/** reportAgentEvents가 서버 HTTP 4xx/5xx로 실패했을 때 사용. 네트워크 단절이 아님. */
+export class ReportAgentEventsHttpError extends Error {
+  constructor(public readonly status: number) {
+    super(`reportAgentEvents failed: ${status}`);
+    this.name = "ReportAgentEventsHttpError";
+  }
+}
+
 /**
  * 에이전트 이벤트(heartbeat, CRASH_DETECTED, OFFLINE_DETECTED 등)를 서버에 보고.
  * 서버에 "중지/충돌/통신단절" 기록이 남도록 함.
  * 엔드포인트: POST /reportAgentEvents.do
+ * HTTP 4xx/5xx 시 ReportAgentEventsHttpError 던짐(통신 성공·오프라인 아님).
  */
 export async function reportAgentEvents(
   baseUrl: string,
@@ -441,5 +450,5 @@ export async function reportAgentEvents(
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(payload)
   });
-  if (!res.ok) throw new Error(`reportAgentEvents failed: ${res.status}`);
+  if (!res.ok) throw new ReportAgentEventsHttpError(res.status);
 }
