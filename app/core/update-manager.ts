@@ -63,15 +63,16 @@ export class UpdateManager {
 
   private async initAutoUpdater(): Promise<void> {
     try {
-      const updaterModule = await import("electron-updater");
-      const autoUpdater = updaterModule.autoUpdater;
-      
+      const updaterModule = await import("electron-updater") as { autoUpdater?: import("electron-updater").AppUpdater; default?: { autoUpdater?: import("electron-updater").AppUpdater } };
+      const autoUpdater = updaterModule.autoUpdater ?? updaterModule.default?.autoUpdater;
+
       if (!autoUpdater) {
         console.warn("[UpdateManager] autoUpdater not found in electron-updater module");
         return;
       }
-      
+
       this.autoUpdater = autoUpdater;
+      console.info("[UpdateManager] current version:", this.appVersion);
 
       // 자동 다운로드 활성화 (무확인 자동 적용)
       autoUpdater.autoDownload = true;
@@ -80,19 +81,22 @@ export class UpdateManager {
       // 이벤트 리스너 설정
       autoUpdater.on("checking-for-update", () => {
         this.status = { state: "checking" };
+        console.info("[UpdateManager] checking for update...");
         this.sendStatusToRenderer();
       });
 
       autoUpdater.on("update-available", (info) => {
         this.status = { state: "available", version: info.version };
+        console.info("[UpdateManager] update available:", info.version);
         this.logger.write(LOG_CODES.UPDATE_FOUND, "INFO", {
           version: info.version,
         });
         this.sendStatusToRenderer();
       });
 
-      autoUpdater.on("update-not-available", () => {
+      autoUpdater.on("update-not-available", (info) => {
         this.status = { state: "not-available" };
+        console.info("[UpdateManager] update not available (current:", this.appVersion + ", info:", String((info as { version?: string })?.version ?? "—") + ")");
         this.sendStatusToRenderer();
       });
 
@@ -123,6 +127,7 @@ export class UpdateManager {
       autoUpdater.on("error", async (error) => {
         const errorMessage = error?.message || String(error);
         this.status = { state: "error", error: errorMessage };
+        console.warn("[UpdateManager] error:", errorMessage, error);
         this.logger.write(LOG_CODES.UPDATE_FAILED, "WARN", {
           error: errorMessage,
         });
@@ -172,6 +177,10 @@ export class UpdateManager {
         await this.autoUpdater.checkForUpdates();
         // 이벤트(update-not-available 등)가 먼저 처리되도록 짧게 대기 후 상태 반환
         await new Promise((r) => setTimeout(r, 150));
+        // 패키징되지 않은(개발) 환경에서는 electron-updater가 스킵해 이벤트를 안 보냄 → 확인 중에서 복귀
+        if (this.status.state === "checking") {
+          this.status = { state: "not-available" };
+        }
         return this.status;
       } catch (error) {
         const errorMessage =

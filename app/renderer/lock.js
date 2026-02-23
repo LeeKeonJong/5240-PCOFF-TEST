@@ -210,11 +210,15 @@ function showToast(text) {
 async function runAction(label, action) {
   try {
     const result = await action();
-    if (!result || result.success !== false) {
-      showToast(`${label} 완료`);
+    if (result?.stillLocked) {
+      showToast("현재 PC-ON이 불가능합니다. 시업 시간에만 가능합니다.");
       return;
     }
-    showToast(`${label} 실패`);
+    if (result?.success === false) {
+      showToast(result?.error || `${label} 실패`);
+      return;
+    }
+    showToast(`${label} 완료`);
   } catch (error) {
     showToast(`${label} 오류`);
     console.error(error);

@@ -1,6 +1,6 @@
 import { LOG_CODES } from "./constants.js";
 import { TelemetryLogger } from "./telemetry-log.js";
-import { reportAgentEvents } from "./api-client.js";
+import { reportAgentEvents, ReportAgentEventsHttpError } from "./api-client.js";
 import type { LogEntry } from "./types.js";
 
 const MAX_QUEUE_SIZE = 500;
@@ -130,7 +130,10 @@ export class OpsObserver {
       }
     } catch (err) {
       this.queue.unshift(...batch);
-      this.callbacks.onHeartbeatFail?.();
+      // HTTP 4xx/5xx는 서버 도달 성공 → 오프라인 아님. 네트워크 오류일 때만 오프라인으로 보고
+      if (!(err instanceof ReportAgentEventsHttpError)) {
+        this.callbacks.onHeartbeatFail?.();
+      }
       const delay = this.backoffMs;
       this.backoffMs = Math.min(this.backoffMs * 2, MAX_BACKOFF_MS);
       this.scheduleNextFlush(delay);
