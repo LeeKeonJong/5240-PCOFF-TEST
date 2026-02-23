@@ -174,6 +174,35 @@ API마다 달라질 수 있으나, 일반적으로 다음 값이 함께 전달�
 
 **클라이언트 보조:** `screenType`은 문서/클라이언트에서 사용하는 잠금화면 유형(`before`/`off`/`empty`)이며, `exCountRenewal` 기준으로 재계산 가능하다.
 
+**FR-14 잠금화면 문구:** 서버에서 `lockScreenBeforeTitle`/`lockScreenBeforeMessage`, `lockScreenOffTitle`/`lockScreenOffMessage`, `lockScreenLeaveTitle`/`lockScreenLeaveMessage`를 내려주면 잠금화면에 우선 적용한다. 미제공 시 클라이언트는 선택 API `getLockScreenInfo.do`로 설정값을 보강할 수 있다.
+
+---
+
+### 2.3.1 잠금화면 설정 조회 (선택)
+
+**Endpoint:** `POST https://api.5240.cloud/getLockScreenInfo.do`
+
+**Scenario:** 고객사별 잠금화면 문구·배경 등 설정을 조회한다. `getPcOffWorkTime.do` 응답에 `lockScreen*` 필드가 없을 때 클라이언트가 이 API를 호출해 설정값을 보강한다.
+
+**Request Parameters**
+
+| 파라미터 | 설명 |
+|----------|------|
+| `userServareaId` | 암호화된 서비스 영역 ID |
+| `userStaffId` | 암호화된 직원 ID |
+| `workYmd` | 근무일자(YYYYMMDD) |
+
+**Response (JSON)**
+
+| 필드 | 설명 |
+|------|------|
+| `code` | 조회 결과 코드 (1: 성공 등) |
+| `send_data` | 배열. 각 항목: `ScreenType`(before/off/empty), `LockTitle`, `LockMessage`, `Background`, `Logo` 등 |
+
+**ScreenType 매핑:** `before` → 시업 전, `off` → 종업, `empty`(또는 `leave`) → 이석. 클라이언트는 `send_data`를 `WorkTimeResponse`의 `lockScreen*` 필드로 변환해 병합한다.
+
+**WebView 호환:** 서버에 `getLockScreenInfo.do`가 없을 경우, `config.json`에 `lockScreenApiUrl`을 두면 해당 URL로 동일 규격(POST `[{ "userServareaId" }]` → `{ "status", "send_data" }`)을 호출한다. 예: `https://5240.work/LockScreen/getScreenInfo.php`
+
 ---
 
 ### 2.4 PC ON/OFF 동작 로그 기록

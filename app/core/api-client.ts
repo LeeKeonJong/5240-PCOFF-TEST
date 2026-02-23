@@ -104,6 +104,35 @@ export interface WorkTimeResponse {
   pwdChgMsg?: string;
   /** 서버가 내려준 화면 유형(before/off/empty). exCountRenewal 기준 재계산 가능 */
   screenType?: ScreenType | string;
+
+  /* --- FR-14: 고객사 설정(잠금화면 문구). 서버에서 내려주면 우선 적용 --- */
+  /** 시업 전(before) 잠금 제목 */
+  lockScreenBeforeTitle?: string;
+  /** 시업 전(before) 잠금 안내 문구 */
+  lockScreenBeforeMessage?: string;
+  /** 종업(off) 잠금 제목 */
+  lockScreenOffTitle?: string;
+  /** 종업(off) 잠금 안내 문구 */
+  lockScreenOffMessage?: string;
+  /** 이석(leave/empty) 잠금 제목 */
+  lockScreenLeaveTitle?: string;
+  /** 이석(leave/empty) 잠금 안내 문구 */
+  lockScreenLeaveMessage?: string;
+}
+
+/** 잠금화면 설정 조회 API 응답 항목 (getLockScreenInfo.send_data 요소) */
+export interface LockScreenInfoItem {
+  ScreenType?: string;
+  LockTitle?: string;
+  LockMessage?: string;
+  Background?: string;
+  Logo?: string;
+}
+
+/** 잠금화면 설정 조회 API 응답 (고객사별 문구/배경 등, 선택 API) */
+export interface GetLockScreenInfoResponse {
+  code?: number;
+  send_data?: LockScreenInfoItem[];
 }
 
 export interface ApiClientConfig {
@@ -263,6 +292,36 @@ export class PcOffApiClient {
     })) as WorkTimeResponse | WorkTimeResponse[];
     if (Array.isArray(json)) return json[0] ?? {};
     return json;
+  }
+
+  /**
+   * 고객사 잠금화면 설정 조회 (선택 API).
+   * getPcOffWorkTime에 lockScreen* 미포함 시 이 API로 설정값 보강.
+   * 응답 send_data를 WorkTimeResponse 형식으로 매핑한 객체를 반환(병합용).
+   */
+  async getLockScreenInfo(): Promise<Partial<WorkTimeResponse>> {
+    const raw = (await this.post("/getLockScreenInfo.do", {
+      workYmd: this.config.workYmd,
+      userServareaId: this.config.userServareaId,
+      userStaffId: this.config.userStaffId
+    })) as GetLockScreenInfoResponse | GetLockScreenInfoResponse[];
+    const res = Array.isArray(raw) ? raw[0] : raw;
+    const list = res?.send_data ?? [];
+    const out: Partial<WorkTimeResponse> = {};
+    for (const item of list) {
+      const t = (item.ScreenType ?? "").toLowerCase();
+      if (t === "before") {
+        if (item.LockTitle != null) out.lockScreenBeforeTitle = String(item.LockTitle);
+        if (item.LockMessage != null) out.lockScreenBeforeMessage = String(item.LockMessage);
+      } else if (t === "off") {
+        if (item.LockTitle != null) out.lockScreenOffTitle = String(item.LockTitle);
+        if (item.LockMessage != null) out.lockScreenOffMessage = String(item.LockMessage);
+      } else if (t === "empty" || t === "leave") {
+        if (item.LockTitle != null) out.lockScreenLeaveTitle = String(item.LockTitle);
+        if (item.LockMessage != null) out.lockScreenLeaveMessage = String(item.LockMessage);
+      }
+    }
+    return out;
   }
 
   async callCmmPcOnOffLogPrc(request: PcOnOffLogRequest): Promise<unknown> {

@@ -72,6 +72,7 @@ const api = {
     }>,
   requestUpdateCheck: () => ipcRenderer.invoke("pcoff:requestUpdateCheck") as Promise<UpdateStatus>,
   quitAndInstallUpdate: () => ipcRenderer.invoke("pcoff:quitAndInstallUpdate") as Promise<{ applied: boolean }>,
+  hasDownloadedUpdate: () => ipcRenderer.invoke("pcoff:hasDownloadedUpdate") as Promise<boolean>,
   getUpdateStatus: () => ipcRenderer.invoke("pcoff:getUpdateStatus") as Promise<UpdateStatus>,
   getAppVersion: () => ipcRenderer.invoke("pcoff:getAppVersion") as Promise<string>,
   getLogsPath: () => ipcRenderer.invoke("pcoff:getLogsPath") as Promise<string>,

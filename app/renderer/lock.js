@@ -83,7 +83,15 @@ function coerceWorkTimeFromApi(data) {
     leaveSeatOffInputMath: data.leaveSeatOffInputMath ?? null,
     breakStartTime: data.breakStartTime ?? null,
     breakEndTime: data.breakEndTime ?? null,
-    leaveSeatTime: Number(data.leaveSeatTime ?? DEFAULT_WORK.leaveSeatTime ?? 0) || 0
+    leaveSeatTime: Number(data.leaveSeatTime ?? DEFAULT_WORK.leaveSeatTime ?? 0) || 0,
+    screenType: data.screenType ?? DEFAULT_WORK.screenType,
+    // FR-14: 고객사 설정 잠금화면 문구 (서버에서 내려주면 적용)
+    lockScreenBeforeTitle: data.lockScreenBeforeTitle ?? undefined,
+    lockScreenBeforeMessage: data.lockScreenBeforeMessage ?? undefined,
+    lockScreenOffTitle: data.lockScreenOffTitle ?? undefined,
+    lockScreenOffMessage: data.lockScreenOffMessage ?? undefined,
+    lockScreenLeaveTitle: data.lockScreenLeaveTitle ?? undefined,
+    lockScreenLeaveMessage: data.lockScreenLeaveMessage ?? undefined
   };
 }
 
@@ -330,30 +338,66 @@ function applyLockInfo(work) {
   const startTime = parseYmdHm(work.pcOnYmdTime);
   const offTime = parseYmdHm(work.pcOffYmdTime);
 
+  // 메시지 로그: 서버에서 받은 잠금화면 문구 여부 확인용
+  const lockScreenFromServer = {
+    lockScreenBeforeTitle: work.lockScreenBeforeTitle,
+    lockScreenBeforeMessage: work.lockScreenBeforeMessage,
+    lockScreenOffTitle: work.lockScreenOffTitle,
+    lockScreenOffMessage: work.lockScreenOffMessage,
+    lockScreenLeaveTitle: work.lockScreenLeaveTitle,
+    lockScreenLeaveMessage: work.lockScreenLeaveMessage
+  };
+  console.info("[PCOFF] 잠금화면 문구 — 서버 응답 필드:", JSON.stringify(lockScreenFromServer, null, 0));
+  console.info("[PCOFF] 잠금화면 문구 — screenType:", work.screenType, "pcOnYn:", work.pcOnYn, "pcOnMsg:", work.pcOnMsg || "(없음)");
+
+  // FR-14: 서버에서 고객사 설정(잠금화면 문구)을 내려주면 우선 적용. 상세 안내(임시연장·긴급사용 등)는 화면에 뿌리지 않고, '나의 근태정보 불러오기'에서 확인하도록 함(문서: docs/잠금_및_적용정책_설명.md 등).
+  const fallback = {
+    before: { title: "시업 전 잠금 상태입니다.", message: `PC 사용가능시간은 ${hm(work.pcOnYmdTime)}~${hm(work.pcOffYmdTime)}입니다.` },
+    leave: { title: "이석 감지 상태입니다.", message: "이석 사유 확인 후 PC-ON 하여 주세요." },
+    off: {
+      title: "지금은 PC 화면이 잠겨있습니다.",
+      message: ""
+    }
+  };
+
   if (work.pcOnYn === "N" && work.pcOnMsg) {
-    if (lockTitleEl) lockTitleEl.textContent = work.pcOnMsg;
-    if (lockInfoEl) lockInfoEl.textContent = "긴급사용 또는 휴일근무신청을 한 경우 PC-ON 하여 주세요.";
+    const title = work.pcOnMsg;
+    const message = work.lockScreenOffMessage || "긴급사용 또는 휴일근무신청을 한 경우 PC-ON 하여 주세요.";
+    console.info("[PCOFF] 잠금화면 적용 — pcOnYn=N: title:", title, "| message:", message, "| source:", work.lockScreenOffMessage ? "server" : "fallback");
+    if (lockTitleEl) lockTitleEl.textContent = title;
+    if (lockInfoEl) { lockInfoEl.textContent = message; lockInfoEl.style.display = ""; }
     return;
   }
 
   if (work.screenType === "before" || (startTime && now < startTime)) {
-    if (lockTitleEl) lockTitleEl.textContent = "시업 전 잠금 상태입니다.";
-    if (lockInfoEl) lockInfoEl.textContent = `PC 사용가능시간은 ${hm(work.pcOnYmdTime)}~${hm(work.pcOffYmdTime)}입니다.`;
+    const title = work.lockScreenBeforeTitle || fallback.before.title;
+    const message = work.lockScreenBeforeMessage || work.pcOnMsg || fallback.before.message;
+    const source = work.lockScreenBeforeTitle || work.lockScreenBeforeMessage || work.pcOnMsg ? "server" : "fallback";
+    console.info("[PCOFF] 잠금화면 적용 — before: title:", title, "| message:", message, "| source:", source);
+    if (lockTitleEl) lockTitleEl.textContent = title;
+    if (lockInfoEl) { lockInfoEl.textContent = message; lockInfoEl.style.display = ""; }
     return;
   }
 
   if (work.screenType === "empty") {
-    if (lockTitleEl) lockTitleEl.textContent = "이석 감지 상태입니다.";
-    if (lockInfoEl) lockInfoEl.textContent = "이석 사유 확인 후 PC-ON 하여 주세요.";
+    const title = work.lockScreenLeaveTitle || fallback.leave.title;
+    const message = work.lockScreenLeaveMessage || work.pcOnMsg || fallback.leave.message;
+    const source = work.lockScreenLeaveTitle || work.lockScreenLeaveMessage || work.pcOnMsg ? "server" : "fallback";
+    console.info("[PCOFF] 잠금화면 적용 — empty(이석): title:", title, "| message:", message, "| source:", source);
+    if (lockTitleEl) lockTitleEl.textContent = title;
+    if (lockInfoEl) { lockInfoEl.textContent = message; lockInfoEl.style.display = ""; }
     return;
   }
 
-  if (lockTitleEl) lockTitleEl.textContent = "PC 사용이 종료되었습니다.";
-  if (offTime && now >= offTime) {
-    if (lockInfoEl) lockInfoEl.textContent = `임시연장은 PC-OFF 시간부터 ${work.pcExTime}분씩 ${work.pcExMaxCount}회 사용할 수 있습니다.`;
-  } else {
-    if (lockInfoEl) lockInfoEl.textContent = `PC 사용가능시간은 ${hm(work.pcOnYmdTime)}~${hm(work.pcOffYmdTime)}입니다.`;
-  }
+  // 종업(off): 서버 lockScreenOffMessage만 본문에 표시. 상세 안내는 '나의 근태정보 불러오기'에서 확인
+  const title = work.lockScreenOffTitle || fallback.off.title;
+  const message = work.lockScreenOffMessage || fallback.off.message;
+  const source = work.lockScreenOffTitle || work.lockScreenOffMessage ? "server" : "fallback";
+  console.info("[PCOFF] 잠금화면 적용 — off(종업): title:", title, "| message:", message || "(없음)", "| source:", source);
+  if (lockTitleEl) lockTitleEl.textContent = title;
+  if (lockInfoEl) lockInfoEl.textContent = message;
+  if (lockInfoEl && !message) lockInfoEl.style.display = "none";
+  else if (lockInfoEl) lockInfoEl.style.display = "";
 }
 
 async function loadUserInfo() {
