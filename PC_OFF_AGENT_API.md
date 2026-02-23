@@ -1,8 +1,13 @@
 # PC‑OFF Agent API (PCOFF 통신 규격)
 
-> **문의:** 김기현 프로
+> **문의:** 김기현 프로  
+> **규격 기준:** 5240_COMMON_PC_OFF_API v1.9 (엑셀)
+> 5240_COMMON_PC_OFF_API_v1.9_원본시트.md
 
 이 문서는 PCOFF Agent가 서버와 통신하는 API 엔드포인트와 파라미터를 정의한다. 해당 규격은 Electron 기반으로 재구축될 To‑Be 시스템에서도 As‑Is 동작을 유지하기 위한 기준을 제공한다.
+
+**Base URL:** `https://api.tigris5240.com`  
+**공통:** 모든 API는 `HTTPS/POST`, Request/Response `type:json`(JSON).
 
 ---
 
@@ -34,6 +39,19 @@ API마다 달라질 수 있으나, 일반적으로 다음 값이 함께 전달�
 * `PCOFF_TEMPORARY_DELAY`
 * `PCOFF_USE_EMERGENCY`
 
+### 0.4 공통 응답 코드 (에러코드)
+
+서버 응답의 `code` 값은 UTF-8로 인코딩된 `msg`와 함께 반환된다. 한글 표시를 위해 `msg`는 UTF-8로 디코딩하여 사용한다.
+
+| code | 설명 |
+|------|------|
+| `1` | 조회 성공 |
+| `-1` | 조회 실패 |
+| `-4` | 데이터 처리 오류 |
+| `-5` | 임시연장 실패 |
+| `-9` | 기타 알 수 없는 오류 |
+| `500` | 내부 서버 오류 |
+
 ---
 
 ## 1. 시나리오‑API 매핑 요약
@@ -53,90 +71,141 @@ API마다 달라질 수 있으나, 일반적으로 다음 값이 함께 전달�
 
 ### 2.1 서비스 영역 정보 획득
 
-**Endpoint:** `POST /getPcOffServareaInfo.do`
+**Endpoint:** `POST https://api.tigris5240.com/getPcOffServareaInfo.do`
 
-**Scenario:** 로그인(기본/자동) 시 전화번호 입력 후 서비스 영역 정보(Servarea)를 조회한다.
+**Scenario:** 전화번호를 입력받아 접속 가능한 서비스 영역 리스트를 조회한다.
 
 **Request Parameters**
 
 | 파라미터 | 설명 |
-|---|---|
-| `userMobileNo (000-0000-0000)` | 사용자 전화번호 |
+|----------|------|
+| `userMobileNo` | 로그인 유저 휴대폰 번호 (예: 000-0000-0000) |
 
-**Response (요건 기반 예시)**
+**Response (JSON)**
 
-* 서비스 영역 코드/식별자(`userServareaId`) 등을 반환한다.
+| 필드 | 설명 |
+|------|------|
+| `code` | 조회 결과 코드 (1: 성공 등, §0.4 참고) |
+| `msg` | 조회 결과 메시지 (UTF-8 디코딩 후 사용) |
+| `servareaList` | 접속 가능 서비스 영역 리스트 (예: `[{servareaId, servareaNm}, ...]`) |
+| `userMobileNo` | 호출 시 전달한 전화번호(그대로 반환) |
 
 ---
 
 ### 2.2 로그인 사용자 인증
 
-**Endpoint:** `POST /getPcOffLoginUserInfo.do`
+**Endpoint:** `POST https://api.tigris5240.com/getPcOffLoginUserInfo.do`
 
-**Scenario:** 서비스 영역 정보 조회 후 계정/비밀번호를 입력하여 사용자 인증을 수행한다.
+**Scenario:** 로그인 시 서비스 영역·직원 식별 정보를 받기 위해, 전화번호·선택한 서비스영역·아이디·비밀번호를 전달한다. 성공 시 암호화된 서비스영역 ID·직원 ID를 반환한다.
 
 **Request Parameters**
 
 | 파라미터 | 설명 |
-|---|---|
-| `userMobileNo` | 사용자 전화번호 |
-| `userServareaId` | 서비스 영역 코드(암호화 및 인코딩) |
-| `userStaffId` | 사용자 OID(암호화 및 인코딩) |
-| `workYmd (YYYYMMDD)` | 업무일자 |
+|----------|------|
+| `userMobileNo` | 로그인 유저 휴대폰 번호 |
+| `loginServareaId` | 로그인 서비스 영역(암호화). 서비스영역 조회 결과에서 선택한 값 |
+| `loginUserId` | 로그인 유저 아이디 |
+| `loginPassword` | 로그인 유저 패스워드 |
 
-**Response (요건 기반 예시)**
+**Response (JSON)**
 
-* 로그인 성공 여부와 사용자 상태 정보를 반환한다.
+| 필드 | 설명 |
+|------|------|
+| `code` | 처리 결과 코드 |
+| `msg` | 처리 결과 메시지 (UTF-8 디코딩 후 사용) |
+| `userMobileNo` | 로그인 유저 휴대폰 번호 |
+| `userServareaId` | 암호화된 서비스 영역 ID (이후 API 공통 파라미터) |
+| `userStaffId` | 암호화된 직원 ID (이후 API 공통 파라미터) |
+| `loginUserNm` | 로그인 유저 성명 |
+| `corpNm`, `posNm`, `resNm` | 회사명, 직위, 직책 |
+| `message1` ~ `message5` | 메시지 필드 |
 
 ---
 
 ### 2.3 근태/정책 판단 데이터 조회
 
-**Endpoint:** `POST /getPcOffWorkTime.do`
+**Endpoint:** `POST https://api.tigris5240.com/getPcOffWorkTime.do`
 
-**Scenario:** PC‑ON/PC‑OFF 상태 판단, 이석, 임시연장, 긴급사용 가능 여부 등 정책 결정을 위한 데이터를 조회한다.
+**Scenario:** 해당 근무일자에 대한 근태 관련 시간 데이터(시업, 종업, PC-ON, PC-OFF, 출근체크, 퇴근체크 등)를 조회한다. 정책 판단의 기준 데이터로 사용한다.
 
-**Options:**
+**Request Parameters**
 
-이 API는 여러 옵션에 따라 추가 데이터를 반환할 수 있다. 예: `CHATBOT_TAA_MSG`, `PCOFF_LEAVE_YN`, `BSTRIP_PCOFF_YN`, `TIMEREADER_LEAVE_SEAT`, `PCOFF_TEMPORARY_DELAY`, `PCOFF_USE_EMERGENCY`.
+| 파라미터 | 설명 |
+|----------|------|
+| `userServareaId` | 암호화된 서비스 영역 ID |
+| `userStaffId` | 암호화된 직원 ID |
+| `workYmd` | 근무일자(YYYYMMDD) |
 
-**Response Fields (주요)**
+**Options:** 서버 정책에 따라 추가 데이터 반환. 예: `CHATBOT_TAA_MSG`, `PCOFF_LEAVE_YN`, `BSTRIP_PCOFF_YN`, `TIMEREADER_LEAVE_SEAT`, `PCOFF_TEMPORARY_DELAY`, `PCOFF_USE_EMERGENCY`.
+
+**Response (JSON)** — `code`, `msg`(UTF-8 디코딩 후 사용), 이하 근태 데이터.
+
+**Response Fields (전체, 엑셀 v1.9 기준)**
 
 | Field | 설명 |
-|---|---|
-| `pcOnYn (Y/N)` | PC‑ON 가능 여부 |
-| `pcOnYmdTime (YYYYMMDDHH24MI)` | PC‑ON 시간 |
-| `pcOffYmdTime (YYYYMMDDHH24MI)` | PC‑OFF 시간 |
-| `leaveSeatUseYn (Y/N)` | 이석 관리 사용 여부 |
-| `leaveSeatTime (분)` | 이석 잠금 시간 |
-| `leaveSeatReasonYn (Y/N)` | 이석 사유 입력 여부 |
-| `leaveSeatReasonManYn (Y/N)` | 이석 사유 필수 여부 |
-| `leaveSeatOffInputMath (0)` | 비근무시간 입력/선택 설정 |
-| `pcExMaxCount` | 임시연장 최대 횟수 |
-| `pcExCount` | 임시연장 사용 횟수 |
-| `pcExTime (분)` | 임시연장 시간 |
-| `emergencyUseYesNo (YES/NO)` | 긴급사용 가능 여부 |
-| `emergencyReasonYesNo (YES/NO)` | 긴급사용 시 사유 입력 여부 |
-| `emergencyUsePass` | 긴급사용 인증번호 |
-| `pcoffEmergencyYesNo (YES/NO)` | 긴급사용 중 여부 |
-| `emergencyStaDate (YYYYMMDDHH24MI)` | 긴급사용 시작 시간 |
-| `emergencyEndDate (YYYYMMDDHH24MI)` | 긴급사용 종료 시간 |
-| `screenType` | 잠금화면 유형: `before`(시업 전), `off`(종업), `empty`(이석). 클라이언트에서 `exCountRenewal`로 재계산 가능 |
-| `exCountRenewal (YYYYMMDDHH24MI)` | 일자변경 시각(옵션 1227). 현재 시각 < exCountRenewal → 종업화면(off), ≥ exCountRenewal → 시업화면(before) |
+|-------|------|
+| `userServareaId`, `userStaffId` | 암호화된 서비스 영역 ID, 직원 ID |
+| `workYmd` | 근무일자(YYYYMMDD) |
+| `staYmdTime`, `endYmdTime` | 시업시간, 종업시간(YYYYMMDDHH24MI) |
+| `pcOnYmdTime`, `pcOffYmdTime` | PC-ON 시간, PC-OFF 시간(임시연장 적용된 종료시간, YYYYMMDDHH24MI) |
+| `checkTime` | 출퇴근 체크시간(값 없으면 ##N) |
+| `workTypeCd`, `workTypeNm` | 근무유형코드, 근무유형명(고객사별 상이) |
+| `freeTimeWorkTypeYn` | 자율근무제 여부(Y/N) |
+| `pcOffTargetYn` | PC-OFF 적용 대상 여부(Y/N) |
+| `exCountRenewal` | 임시연장 차수 초기화 기준시간(YYYYMMDDHH24MI) |
+| `pcExCount`, `pcExMaxCount`, `pcExTime` | 해당일 임시연장 사용 횟수, 최대 횟수, 1회당 추가 시간(분) |
+| `pcMealStaTime`, `pcMealEndTime` | 휴게(식사) 시작·종료 시간(YYYYMMDDHH24MI) |
+| `pcOnYn`, `pcOnMsg` | PC 사용 가능 일자 여부(Y/N), PC 사용 안내 메시지 |
+| `workZoneQtyType` | 근무구역 관리 유형(예: ZONE 등) |
+| `pcoffEmergencyYesNo` | PC-OFF 긴급사용 기능 사용 여부(YES/NO) |
+| `emergencyUseYesNo`, `emergencyUsePass` | 긴급사용 승인 여부(YES/NO), 긴급사용 비밀번호(없으면 null) |
+| `emergencyReasonYesNo` | 긴급사용 사유 입력 여부(YES/NO) |
+| `emergencyStaDate`, `emergencyEndDate` | 긴급사용 시작·종료시간(YYYYMMDDHH24MI 또는 HH24MISS) |
+| `nextYmd` | 익일 근무일자(YYYYMMDD) |
+| `leaveSeatUseYn` | 이석관리 사용 여부(YES/NO) |
+| `leaveSeatTime` | 이석 시 자동 화면잠금 기준시간(분) |
+| `leaveSeatReasonTime` | 이석 후 사유 입력 기준시간(분) |
+| `leaveSeatReasonYn`, `leaveSeatReasonManYn` | 이석 후 PC ON 시 사유 입력 여부, 사유 필수 여부(YES/NO) |
+| `leaveSeatOffInputMath` | 이석 관련 입력 처리 구분값(0/1/2/3) |
+| `weekCreWorkTime`, `weekWorkTime` | 주 기준 근로시간, 해당 주 누적 근로시간 |
+| `weekLmtOtTime`, `weekUseOtTime`, `weekApplOtTime` | 주 연장근로 한도·사용·신청 시간 |
+| `apiCallLogYesNo` | API 호출 로그 저장 여부(YES/NO) |
+| `pcoffLoginYn` | PC-OFF 상태에서 로그인 가능 여부(Y/N) |
+
+**클라이언트 보조:** `screenType`은 문서/클라이언트에서 사용하는 잠금화면 유형(`before`/`off`/`empty`)이며, `exCountRenewal` 기준으로 재계산 가능하다.
 
 ---
 
 ### 2.4 PC ON/OFF 동작 로그 기록
 
-**Endpoint:** `POST /callCmmPcOnOffLogPrc.do`
+**Endpoint:** `POST https://api.tigris5240.com/callCmmPcOnOffLogPrc.do`
 
-**Scenario:** Agent의 출근/퇴근 로그 기록에 사용한다. IN/OUT 중 earliest/latest 시간으로 출근/퇴근을 산정한다.
+**Scenario:** PC ON/OFF 시 로그를 서버에 기록한다. Agent는 IN/OUT 로그 코드에 따라 출근/퇴근을 산정한다.
 
 **Request Parameters**
 
 | 파라미터 | 설명 |
-|---|---|
-| `tmckButnCd (IN/OUT)` | PC‑OFF 동작 로그 구분(IN: 출근, OUT: 퇴근) |
+|----------|------|
+| `userServareaId` | 암호화된 서비스 영역 ID |
+| `userStaffId` | 암호화된 직원 ID |
+| `workYmd` | 근무일자(YYYYMMDD) |
+| `recoder` | 고정값 `"PC-OFF"` |
+| `tmckButnCd` | `IN`(켜질 때/출근), `OUT`(꺼질 때/퇴근) |
+| `reason` | 사유(사유 필수인 경우 입력). 긴급사용·이석 사유 등 |
+| `emergencyYn` | `N` 또는 `긴급사용여부(Y/N)/이석시간(시간단위,소수점7자리)/이석시작(HHMI)/이석종료(HHMI)/이석중비근무시간`. 예: `N`, `0.5/1210/1240/0` |
+
+**이석 중 비근무 시간 (`emergencyYn` 마지막 값, `leaveSeatOffInputMath` 기준)**
+
+`getPcOffWorkTime.do` 응답의 `leaveSeatOffInputMath` 값에 따라 전달한다.
+
+| 값 | 의미 | 전달 |
+|----|------|------|
+| `0` | 사용 안 함 | 전달하지 않아도 됨 |
+| `1` | 비근무시간 입력 | 사용자 입력값 그대로 전달 |
+| `2` | 근무 중 이석시간으로 자동 입력 | `0` 전달 |
+| `3` | 근무이석(1)/비근무이석(2) 선택 | 콤보 1이면 `0`, 2면 입력값 전달 |
+
+**NOTE (엑셀):** 위 2, 3의 경우 서버로 이석 시작시간·종료시간을 전달하며, 서버에서 시간을 재계산한다.
 
 **Option:** `CHATBOT_TAA_MSG`
 
@@ -150,47 +219,52 @@ API마다 달라질 수 있으나, 일반적으로 다음 값이 함께 전달�
 
 ### 2.5 임시연장 요청
 
-**Endpoint:** `POST /callPcOffTempDelay.do`
+**Endpoint:** `POST https://api.tigris5240.com/callPcOffTempDelay.do`
 
-**Scenario:** 근태 정보 결과에서 임시연장이 허용되는 경우, 임시연장 버튼 동작 시 서버에 요청한다.
+**Scenario:** 임시연장 처리 후 서버가 갱신된 근태 시간 정보를 조회해 리턴한다. `getPcOffWorkTime.do`에서 `pcExMaxCount > 0`이고 `pcExCount < pcExMaxCount`일 때만 호출한다.
 
 **Options:** `PCOFF_TEMPORARY_DELAY`
 
-**Request Parameters (요건 기반)**
+**Request Parameters**
 
 | 파라미터 | 설명 |
-|---|---|
-| `pcOffYmdTime (YYYYMMDDHH24MI)` | PC‑OFF 기준 시간 |
+|----------|------|
+| `userServareaId` | 암호화된 서비스 영역 ID |
+| `userStaffId` | 암호화된 직원 ID |
+| `workYmd` | 근무일자(YYYYMMDD) |
+| `pcOffYmdTime` | PC‑OFF 기준 시간(YYYYMMDDHH24MI). 선택 시 사용 |
+| `extCount` | 임시연장 차수(1, 2, …). 서버가 연장 횟수로 사용 |
 
-임시연장은 `pcExMaxCount > 0`이고 `pcExCount < pcExMaxCount`일 때 가능하며, `pcExTime` 동안 PC 사용이 연장된다.
+임시연장 성공 시 응답에 갱신된 근태 데이터(예: `pcExCount`, `pcExTime` 등)가 포함된다.
 
 ---
 
 ### 2.6 긴급사용 요청
 
-**Endpoint:** `POST /callPcOffEmergencyUse.do`
+**Endpoint:** `POST https://api.tigris5240.com/callPcOffEmergencyUse.do`
 
-**Scenario:** 긴급사용이 허용될 경우, 인증번호와 사유 입력 후 긴급사용을 시작하거나 종료한다.
+**Scenario:** 긴급사용 요청 시 호출한다. 호출 후 PC-OFF에서 확인할 수 있도록 긴급사용 비밀번호 및 긴급사용 시간이 응답에 포함된다.
 
 **Options:** `PCOFF_USE_EMERGENCY`
 
-**Request/Response Fields (주요)**
+**Request Parameters**
 
-| Field | 설명 |
-|---|---|
+| 파라미터 | 설명 |
+|----------|------|
+| `userServareaId` | 암호화된 서비스 영역 ID |
+| `userStaffId` | 암호화된 직원 ID |
+| `workYmd` | 근무일자(YYYYMMDD) |
+| `clickIp` | (선택) 호출 PC의 IP/GPS/OS를 `"/"`로 연결한 문자열. 예: `127.0.0.1/WINDOW` |
 | `emergencyUsePass` | 긴급사용 인증번호 |
-| `reason` | 긴급사용 사유(필요 시) |
-| 기타 상태 값 | 서버 응답에 따라 처리 |
+| `reason` | 긴급사용 사유 (`emergencyReasonYesNo=YES`일 때 입력) |
 
-긴급사용 설정: `emergencyUseYesNo=YES`이면 사용 가능, `emergencyReasonYesNo=YES`이면 사유 입력이 필수다.
-
-긴급사용 시작 시 Lock‑Off, 종료 시 Lock‑On 처리된다.
+**Response:** `code`, `msg` 및 갱신된 근태 정보(긴급사용 비밀번호, 긴급사용 시간 등). `emergencyUseYesNo=YES`이면 사용 가능, `emergencyReasonYesNo=YES`이면 사유 입력 필수. 긴급사용 시작 시 Lock‑Off, 종료 시 Lock‑On 처리.
 
 ---
 
 ### 2.7 에이전트 이벤트 보고 (FR-08, Ops Observer)
 
-**Endpoint:** `POST /reportAgentEvents.do`
+**Endpoint:** `POST {Base URL}/reportAgentEvents.do` (To‑Be 전용, Base URL 동일 적용)
 
 **Scenario:** 에이전트가 heartbeat, 크래시 감지(CRASH_DETECTED), 통신 두절(OFFLINE_DETECTED) 등 이벤트를 중앙 서버에 배치 전송한다. 서버에 "중지/충돌/통신단절" 기록이 남도록 한다.
 
@@ -210,7 +284,7 @@ API마다 달라질 수 있으나, 일반적으로 다음 값이 함께 전달�
 
 ### 2.8 이석정보 서버 전송 (FR-12)
 
-**Endpoint:** `POST /reportLeaveSeatEvent.do`
+**Endpoint:** `POST {Base URL}/reportLeaveSeatEvent.do` (To‑Be 전용, Base URL 동일 적용)
 
 **Scenario:** 에이전트가 이석 시작(START)/종료(END) 이벤트를 세션 기반(`leaveSeatSessionId`)으로 서버에 전송한다. Idle/절전 감지 시 START, PC-ON 해제 시 END. 장애 내성을 위해 실패 시 로컬 큐(JSONL) 적재 후 지수 백오프 재시도.
 

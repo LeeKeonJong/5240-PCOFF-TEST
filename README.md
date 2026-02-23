@@ -243,7 +243,8 @@ PRD Flow 기준 시뮬레이터 시나리오와 매핑입니다.
 - [docs/로그인_테스트.md](docs/로그인_테스트.md) — 로그인 테스트 방법·개발자 로그아웃 핫키
 - [PRD_5240_PcOff_Electron.md](PRD_5240_PcOff_Electron.md) — 제품 요구사항
 - [TRD_5240_PcOff_Electron.md](TRD_5240_PcOff_Electron.md) — 기술 요구사항·아키텍처·IPC
-- [PC_OFF_AGENT_API.md](PC_OFF_AGENT_API.md) — PCOFF API 규격
+- [PC_OFF_AGENT_API.md](PC_OFF_AGENT_API.md) — PCOFF API 규격 (구현용)
+- [docs/5240_COMMON_PC_OFF_API_v1.9_원본시트.md](docs/5240_COMMON_PC_OFF_API_v1.9_원본시트.md) — 엑셀 규격서 v1.9 워크시트 원본 정리
 - [docs/다음_개발_진행_사항.md](docs/다음_개발_진행_사항.md) — 완료 항목·다음 작업 정리
 - [docs/개발_이력_리포트.md](docs/개발_이력_리포트.md) — 개발 이력·이슈 해결 기록
 - [docs/깃_푸시_용량초과_해결.md](docs/깃_푸시_용량초과_해결.md) — release/ 푸시 거부 시 히스토리 정리 방법
