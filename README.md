@@ -194,7 +194,7 @@ PRD Flow 기준 시뮬레이터 시나리오와 매핑입니다.
 - **이석 감지·해제 플로우 (FR-11)**: `app/core/leave-seat.ts`. `screenType=empty` 감지 → `leaveSeatReasonYn/ManYn=YES`이면 사유 입력 모달 → `callCmmPcOnOffLogPrc(IN, reason)`. 휴게시간(`breakStartTime~breakEndTime`) 중이면 사유 면제. 시뮬레이터 Flow-02/02b PASS. ✅
 - **로컬 이석/절전 감지 (FR-11)**: `app/core/leave-seat-detector.ts`. 유휴(Idle): `powerMonitor.getSystemIdleTime()` 5초 폴링, API 정책(`leaveSeatUseYn`, `leaveSeatTime` 분) 초과 시 잠금화면. 절전: suspend 시각 기록, resume 시 경과 >= leaveSeatTime 이면 이석 잠금(감지시각=절전 시작). `getWorkTime` 응답에 로컬 이석 병합. **API 정규화**: 서버가 `leaveSeatUseYn`을 `"YES"`/`"NO"`로 내려줘도 `normalizeLeaveSeatUseYn()`으로 `"Y"`/`"N"` 변환 후 정책 적용. ✅
 - **이석정보 서버 전송 (FR-12)**: `app/core/leave-seat-reporter.ts`. 세션 기반(`leaveSeatSessionId`) START/END 전송(`POST /reportLeaveSeatEvent.do`). 이석 감지 시 START, PC-ON 해제 시 END. 재시도 큐(`leave-seat-queue.jsonl`) + 지수 백오프, 30초 주기 플러시. ✅
-- **API 연동**: getPcOffWorkTime, getPcOffServareaInfo, getPcOffLoginUserInfo, callPcOffTempDelay, callPcOffEmergencyUse, callPcOffEmergencyUnlock, callCmmPcOnOffLogPrc, reportLeaveSeatEvent
+- **API 연동**: getPcOffWorkTime, getPcOffServareaInfo, getPcOffLoginUserInfo, callPcOffTempDelay, callPcOffEmergencyUse, callPcOffEmergencyUnlock, callCmmPcOnOffLogPrc, reportLeaveSeatEvent. **API v1.9 정합성**: WorkTimeResponse 전체 필드, recoder "PC-OFF", 임시연장 extCount, 긴급사용 emergencyUsePass·인증번호 모달.
 - **시뮬레이터·CI**: Flow-01~08 시나리오, parity-report.json, parity-summary.md, CI 아티팩트
 - **로깅**: JSONL, TelemetryLogger. LOG_CODES 상수로 APP_START, LOGIN_SUCCESS/FAIL, LOGOUT, LOCK/UNLOCK_TRIGGERED, UPDATE_*, AGENT_*, INSTALLER_REGISTRY_SYNC/FAIL, TRAY_*, LEAVE_SEAT_* 등 기록 (logcode.md·constants.ts 참고) ✅
 - **자동 업데이트 (FR-03)**: `electron-updater` 기반 무확인 자동 업데이트, 재시도 큐, 진행률 UI 표시 ✅
@@ -252,5 +252,5 @@ PRD Flow 기준 시뮬레이터 시나리오와 매핑입니다.
 - [docs/윈도우_설치_테스트_가이드.md](docs/윈도우_설치_테스트_가이드.md) — Windows 설치 파일 빌드·설치·실행 테스트 방법
 - [docs/맥_설치_가이드.md](docs/맥_설치_가이드.md) — Mac 설치 파일 "열 수 없음" / Gatekeeper 경고 시 실행 방법
 - [docs/업데이트_가이드_사용자.md](docs/업데이트_가이드_사용자.md) — 이미 설치한 사용자용 업데이트 확인·적용 방법
-- [docs/잠금_및_적용정책_설명.md](docs/잠금_및_적용정책_설명.md) — 적용 정책(표시용)·잠금 화면 트리거(pcOnYn)·트레이 아이콘 안내
+- [docs/잠금_및_적용정책_설명.md](docs/잠금_및_적용정책_설명.md) — 적용 정책(표시용)·잠금 화면 트리거(pcOnYmdTime/pcOffYmdTime)·트레이 아이콘 안내
 - [docs/operations/logcode.md](docs/operations/logcode.md) — 로그 코드 매핑

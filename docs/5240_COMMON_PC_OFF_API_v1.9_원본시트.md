@@ -3,7 +3,7 @@
 엑셀 규격서 `5240_COMMON_PC_OFF_API_v1.9.xlsx`의 워크시트 내용을 그대로 문서화한 문서입니다.  
 구현용 통합 규격은 루트의 `PC_OFF_AGENT_API.md`를 참고하세요.
 
-**Base URL:** `https://api.tigris5240.com`  
+**Base URL:** `https://api.5240.cloud`  
 **공통:** TYPE `HTTPS/POST`, Request/Response `type:json`(JSON).
 
 ---
@@ -41,7 +41,7 @@
 | 항목 | 값 |
 |------|-----|
 | TYPE | HTTPS/POST |
-| URL | https://api.tigris5240.com/getPcOffServareaInfo.do |
+| URL | https://api.5240.cloud/getPcOffServareaInfo.do |
 | Description | 전화번호받아서 접속가능한 서비스 영역 리스트를 리턴 |
 
 **Request Param** (`type:json`)
@@ -83,7 +83,7 @@
 | 항목 | 값 |
 |------|-----|
 | TYPE | HTTPS/POST |
-| URL | https://api.tigris5240.com/getPcOffLoginUserInfo.do |
+| URL | https://api.5240.cloud/getPcOffLoginUserInfo.do |
 | Description | pc-off 에서 로그인 하는 특정 사용자에 대한 서비스 영역 및 직원 아이디 리턴 |
 
 **Request Param** (`type:json`)
@@ -129,7 +129,7 @@
 | 항목 | 값 |
 |------|-----|
 | TYPE | HTTPS/POST |
-| URL | https://api.tigris5240.com/getPcOffWorkTime.do |
+| URL | https://api.5240.cloud/getPcOffWorkTime.do |
 | Description | pc-off 에서 특정 사용자에 대해 해당 근무일자에 근태 관련 시간 데이터들을 조회 |
 
 **Request Param** (`type:json`)
@@ -203,7 +203,7 @@
 | 항목 | 값 |
 |------|-----|
 | TYPE | HTTPS/POST |
-| URL | https://api.tigris5240.com/callPcOffTempDelay.do |
+| URL | https://api.5240.cloud/callPcOffTempDelay.do |
 | Description | pc-off 에서 특정 사용자가 임시연장을 하는 경우, 임시연장 작업 5240 서버에 진행 후, 임시연장이 처리된 이후의 근태 관련 시간 데이터를 조회해서 리턴 |
 
 **Request Param** (`type:json`)
@@ -237,7 +237,7 @@
 | 항목 | 값 |
 |------|-----|
 | TYPE | HTTPS/POST |
-| URL | https://api.tigris5240.com/callPcOffEmergencyUse.do |
+| URL | https://api.5240.cloud/callPcOffEmergencyUse.do |
 | Description | pc-off 긴급사용 요청시 호출. 호출 후 pc-off 에서 체크 할 수 있도록 긴급사용 비밀번호 및 긴급사용 시간 리턴 |
 
 **Request Param** (`type:json`)
@@ -272,7 +272,7 @@
 | 항목 | 값 |
 |------|-----|
 | TYPE | HTTPS/POST |
-| URL | https://api.tigris5240.com/callCmmPcOnOffLogPrc.do |
+| URL | https://api.5240.cloud/callCmmPcOnOffLogPrc.do |
 | Description | PC ON/OFF 시 로그를 기록하는 API (엑셀 시트8 원본에는 긴급사용 설명이 잘못 복사되어 있음 — 여기서는 API 목적에 맞게 기재) |
 
 **Request Param** (`type:json`)

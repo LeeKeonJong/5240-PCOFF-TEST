@@ -2,39 +2,108 @@
 export type ScreenType = "before" | "off" | "empty";
 
 export interface WorkTimeResponse {
-  pcOnYn?: "Y" | "N";
+  /** 암호화된 서비스 영역 ID */
+  userServareaId?: string;
+  /** 암호화된 직원 ID */
+  userStaffId?: string;
+  /** 근무일자(YYYYMMDD) */
+  workYmd?: string;
+  /** 시업시간(YYYYMMDDHH24MI) */
+  staYmdTime?: string;
+  /** 종업시간(YYYYMMDDHH24MI) */
+  endYmdTime?: string;
+  /** PC-ON 시간(YYYYMMDDHH24MI) */
   pcOnYmdTime?: string;
+  /** PC-OFF 시간 — 임시연장 적용된 종료시간(YYYYMMDDHH24MI) */
   pcOffYmdTime?: string;
-  pcOnMsg?: string;
+  /** 출퇴근 체크시간(값 없으면 ##N) */
+  checkTime?: string;
+  /** 근무유형코드(고객사별 상이) */
+  workTypeCd?: string;
+  /** 근무유형명 */
+  workTypeNm?: string;
+  /** 자율근무제 여부 */
+  freeTimeWorkTypeYn?: "Y" | "N";
+  /** PC-OFF 적용 대상 여부 */
+  pcOffTargetYn?: "Y" | "N";
+  /** 임시연장 차수 초기화 기준시간(YYYYMMDDHH24MI) */
+  exCountRenewal?: string;
+  /** 해당일 임시연장 사용 횟수 */
   pcExCount?: number;
+  /** 임시연장 최대 횟수 */
   pcExMaxCount?: number;
+  /** 1회당 임시연장 추가 시간(분) */
   pcExTime?: number;
-  leaveSeatOffInputMath?: string;
-  leaveSeatReasonYn?: "YES" | "NO";
-  leaveSeatReasonManYn?: "YES" | "NO";
+  /** 휴게(식사) 시작시간(YYYYMMDDHH24MI) */
+  pcMealStaTime?: string;
+  /** 휴게(식사) 종료시간(YYYYMMDDHH24MI) */
+  pcMealEndTime?: string;
+  /** PC 사용 가능 일자 여부(Y/N). 휴일·휴가·출장 등 일자 기준 체크 */
+  pcOnYn?: "Y" | "N";
+  /** PC 사용 안내 메시지 */
+  pcOnMsg?: string;
+  /** 근무구역 관리 유형(예: ZONE 등) */
+  workZoneQtyType?: string;
+  /** PC-OFF 긴급사용 기능 사용 여부 */
   pcoffEmergencyYesNo?: "YES" | "NO";
-  leaveSeatUseYn?: "Y" | "N";
+  /** 긴급사용 승인 여부 */
+  emergencyUseYesNo?: "YES" | "NO";
+  /** 긴급사용 비밀번호(없으면 null) */
+  emergencyUsePass?: string | null;
+  /** 긴급사용 사유 입력 여부 */
+  emergencyReasonYesNo?: "YES" | "NO";
+  /** 긴급사용 시작시간(YYYYMMDDHH24MI 또는 HH24MISS) */
+  emergencyStaDate?: string;
+  /** 긴급사용 종료시간(YYYYMMDDHH24MI 또는 HH24MISS) */
+  emergencyEndDate?: string;
+  /** 익일 근무일자(YYYYMMDD) */
+  nextYmd?: string;
+  /** 이석관리 사용 여부 */
+  leaveSeatUseYn?: "Y" | "N" | "YES" | "NO";
   /** 이석 판정 기준 시간(분). 유휴/절전 경과 >= 이 값이면 이석 처리 */
   leaveSeatTime?: number;
-  emergencyUseYesNo?: "YES" | "NO";
-  /** FR-15: 긴급해제 기능 사용 여부 */
+  /** 이석 후 사유 입력 기준시간(분) */
+  leaveSeatReasonTime?: number;
+  /** 이석 후 PC ON 시 사유 입력 여부 */
+  leaveSeatReasonYn?: "YES" | "NO";
+  /** 이석 사유 필수 여부 */
+  leaveSeatReasonManYn?: "YES" | "NO";
+  /** 이석 관련 입력 처리 구분값(0/1/2/3) */
+  leaveSeatOffInputMath?: string;
+  /** 주 기준 근로시간 */
+  weekCreWorkTime?: string;
+  /** 해당 주 누적 근로시간 */
+  weekWorkTime?: string;
+  /** 주 연장근로 한도 시간 */
+  weekLmtOtTime?: string;
+  /** 주 연장근로 사용 시간 */
+  weekUseOtTime?: string;
+  /** 주 연장근로 신청 시간 */
+  weekApplOtTime?: string;
+  /** API 호출 로그 저장 여부 */
+  apiCallLogYesNo?: "YES" | "NO";
+  /** PC-OFF 상태에서 로그인 가능 여부 */
+  pcoffLoginYn?: "Y" | "N";
+
+  /* --- FR-15: 긴급해제 정책 (서버 옵션) --- */
+  /** 긴급해제 기능 사용 여부 */
   emergencyUnlockUseYn?: "YES" | "NO";
-  /** FR-15: 긴급해제 비밀번호 설정 여부 */
+  /** 긴급해제 비밀번호 설정 여부 */
   emergencyUnlockPasswordSetYn?: "Y" | "N";
-  /** FR-15: 긴급해제 허용 시간(분). 서버 옵션. 기본 180(3시간) */
+  /** 긴급해제 허용 시간(분). 기본 180(3시간) */
   emergencyUnlockTime?: number;
-  /** FR-15: 긴급해제 최대 실패 횟수. 서버 옵션. 기본 5 */
+  /** 긴급해제 최대 실패 횟수. 기본 5 */
   emergencyUnlockMaxFailures?: number;
-  /** FR-15: 긴급해제 차단 시간(초). 서버 옵션. 기본 300(5분) */
+  /** 긴급해제 차단 시간(초). 기본 300(5분) */
   emergencyUnlockLockoutSeconds?: number;
-  /** 비밀번호 변경 필요 여부 (서버에서 플래그 제공 시) */
+
+  /* --- 기타 클라이언트 보조 --- */
+  /** 비밀번호 변경 필요 여부 */
   pwdChgYn?: "Y" | "N";
   /** 비밀번호 변경 메시지 */
   pwdChgMsg?: string;
-  /** 서버가 내려준 화면 유형(시업 전/종업/이석). 클라이언트에서 exCountRenewal로 재계산할 수 있음 */
+  /** 서버가 내려준 화면 유형(before/off/empty). exCountRenewal 기준 재계산 가능 */
   screenType?: ScreenType | string;
-  /** 일자변경 시각(옵션 1227). YYYYMMDDHH24MI. now < exCountRenewal → 종업화면(off), now >= exCountRenewal → 시업화면(before) */
-  exCountRenewal?: string;
 }
 
 export interface ApiClientConfig {
@@ -53,7 +122,12 @@ export interface PcOnOffLogRequest {
 }
 
 export interface EmergencyUseRequest {
-  reason: string;
+  /** 긴급사용 인증번호 */
+  emergencyUsePass: string;
+  /** 긴급사용 사유 (emergencyReasonYesNo=YES일 때 입력) */
+  reason?: string;
+  /** (선택) IP/GPS/OS를 "/"로 연결. 예: 127.0.0.1/WINDOW */
+  clickIp?: string;
 }
 
 /** FR-15: 긴급해제 요청 */
@@ -90,12 +164,19 @@ export interface LoginRequest {
 export interface LoginResponse {
   code?: string;
   msg?: string;
+  userMobileNo?: string;
   userServareaId?: string;
   userStaffId?: string;
   loginUserId?: string;
   loginUserNm?: string;
   corpNm?: string;
   posNm?: string;
+  resNm?: string;
+  message1?: string;
+  message2?: string;
+  message3?: string;
+  message4?: string;
+  message5?: string;
 }
 
 /** 로그인/서비스영역 전용 (인증 전 호출) */
@@ -193,26 +274,30 @@ export class PcOffApiClient {
       reason: request.reason ?? "",
       emergencyYn: request.emergencyYn ?? "N",
       eventName: request.eventName ?? "",
-      recoder: request.recoder ?? "PC-OFF(Electron)"
+      recoder: request.recoder ?? "PC-OFF"
     });
   }
 
-  async callPcOffTempDelay(pcOffYmdTime: string): Promise<unknown> {
+  async callPcOffTempDelay(pcOffYmdTime: string, extCount: number): Promise<unknown> {
     return this.post("/callPcOffTempDelay.do", {
       workYmd: this.config.workYmd,
       userServareaId: this.config.userServareaId,
       userStaffId: this.config.userStaffId,
-      pcOffYmdTime
+      pcOffYmdTime,
+      extCount
     });
   }
 
   async callPcOffEmergencyUse(request: EmergencyUseRequest): Promise<unknown> {
-    return this.post("/callPcOffEmergencyUse.do", {
+    const payload: Record<string, unknown> = {
       workYmd: this.config.workYmd,
       userServareaId: this.config.userServareaId,
       userStaffId: this.config.userStaffId,
-      reason: request.reason
-    });
+      emergencyUsePass: request.emergencyUsePass,
+      reason: request.reason ?? ""
+    };
+    if (request.clickIp) payload.clickIp = request.clickIp;
+    return this.post("/callPcOffEmergencyUse.do", payload);
   }
 
   /** FR-15: 긴급해제 — 비밀번호 검증 후 잠금 해제 */

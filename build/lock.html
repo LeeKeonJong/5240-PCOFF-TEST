@@ -79,11 +79,12 @@
 
     <div id="toast" class="toast"></div>
 
-    <div id="emergency-modal" class="modal-overlay hidden" aria-label="긴급사용 사유 입력">
+    <div id="emergency-modal" class="modal-overlay hidden" aria-label="긴급사용 인증">
       <div class="modal-box">
-        <h2 class="modal-title">긴급사용 사유</h2>
-        <p class="modal-desc">사유를 입력한 뒤 확인을 눌러 주세요.</p>
-        <input id="emergency-reason-input" type="text" class="login-input modal-input" placeholder="예: 긴급 업무 처리" maxlength="200" />
+        <h2 class="modal-title">긴급사용</h2>
+        <p class="modal-desc">인증번호를 입력한 뒤 확인을 눌러 주세요.</p>
+        <input id="emergency-pass-input" type="password" class="login-input modal-input" placeholder="인증번호" maxlength="20" />
+        <input id="emergency-reason-input" type="text" class="login-input modal-input" placeholder="예: 긴급 업무 처리" maxlength="200" style="margin-top:8px" />
         <div class="modal-actions">
           <button id="emergency-modal-cancel" class="button ghost">취소</button>
           <button id="emergency-modal-confirm" class="button primary">확인</button>

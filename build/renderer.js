@@ -97,17 +97,19 @@ async function runAction(label, action) {
   }
 }
 
-/** 긴급사용 사유 입력 모달 표시 (prompt 대체). 확인 시 사유 문자열, 취소 시 null */
+/** 긴급사용 인증번호·사유 입력 모달. 확인 시 { reason, emergencyUsePass }, 취소 시 null */
 function showEmergencyReasonModal() {
   const overlay = document.getElementById("emergency-modal");
-  const input = document.getElementById("emergency-reason-input");
+  const passInput = document.getElementById("emergency-pass-input");
+  const reasonInput = document.getElementById("emergency-reason-input");
   const btnCancel = document.getElementById("emergency-modal-cancel");
   const btnConfirm = document.getElementById("emergency-modal-confirm");
-  if (!overlay || !input) return Promise.resolve(null);
+  if (!overlay || !passInput || !reasonInput) return Promise.resolve(null);
 
-  input.value = "긴급 업무 처리";
+  passInput.value = "";
+  reasonInput.value = "긴급 업무 처리";
   overlay.classList.remove("hidden");
-  input.focus();
+  passInput.focus();
 
   return new Promise((resolve) => {
     const close = (value) => {
@@ -115,17 +117,25 @@ function showEmergencyReasonModal() {
       btnCancel.removeEventListener("click", onCancel);
       btnConfirm.removeEventListener("click", onConfirm);
       overlay.removeEventListener("click", onOverlayClick);
-      input.removeEventListener("keydown", onKeydown);
+      passInput.removeEventListener("keydown", onKeydown);
+      reasonInput.removeEventListener("keydown", onKeydown);
       resolve(value);
     };
     const onCancel = () => close(null);
     const onConfirm = () => {
-      const reason = (input.value ?? "").trim();
-      if (!reason) {
-        showToast("긴급사용 사유를 입력해 주세요.");
+      const pass = (passInput.value ?? "").trim();
+      const reason = (reasonInput.value ?? "").trim();
+      if (!pass) {
+        showToast("인증번호를 입력해 주세요.");
+        passInput.focus();
         return;
       }
-      close(reason);
+      if (!reason) {
+        showToast("긴급사용 사유를 입력해 주세요.");
+        reasonInput.focus();
+        return;
+      }
+      close({ reason, emergencyUsePass: pass });
     };
     const onOverlayClick = (e) => {
       if (e.target === overlay) close(null);
@@ -137,7 +147,8 @@ function showEmergencyReasonModal() {
     btnCancel.addEventListener("click", onCancel);
     btnConfirm.addEventListener("click", onConfirm);
     overlay.addEventListener("click", onOverlayClick);
-    input.addEventListener("keydown", onKeydown);
+    passInput.addEventListener("keydown", onKeydown);
+    reasonInput.addEventListener("keydown", onKeydown);
   });
 }
 
@@ -275,9 +286,9 @@ async function bootstrap() {
   });
   btnUseEl?.addEventListener("click", async () => {
     if (!window.pcoffApi?.requestEmergencyUse) return showToast("preview 모드: 긴급사용");
-    const reason = await showEmergencyReasonModal();
-    if (reason == null || reason === "") return;
-    await runAction("긴급사용", () => window.pcoffApi.requestEmergencyUse(reason));
+    const result = await showEmergencyReasonModal();
+    if (!result) return;
+    await runAction("긴급사용", () => window.pcoffApi.requestEmergencyUse(result.reason, result.emergencyUsePass));
   });
   btnPlayEl?.addEventListener("click", async () => {
     if (!window.pcoffApi?.requestPcOnOffLog) return showToast("preview 모드: PC-ON");

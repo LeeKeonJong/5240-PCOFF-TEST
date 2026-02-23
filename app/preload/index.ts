@@ -94,8 +94,8 @@ const api = {
       data?: unknown;
       error?: string;
     }>,
-  requestEmergencyUse: (reason: string) =>
-    ipcRenderer.invoke("pcoff:requestEmergencyUse", { reason }) as Promise<{
+  requestEmergencyUse: (reason: string, emergencyUsePass?: string) =>
+    ipcRenderer.invoke("pcoff:requestEmergencyUse", { reason, emergencyUsePass }) as Promise<{
       source: "api" | "mock" | "fallback";
       success: boolean;
       data?: unknown;
