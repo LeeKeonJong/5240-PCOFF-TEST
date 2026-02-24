@@ -32,6 +32,12 @@ export interface InstallerRegistry {
   syncStatus: "pending" | "synced" | "failed";
 }
 
+export interface LoadInstallerRegistryResult {
+  registry: InstallerRegistry;
+  /** true면 이번 호출에서 신규 생성됨(첫 실행/설치 후) */
+  created: boolean;
+}
+
 /**
  * 설치자 레지스트리를 로드하거나 최초 생성한다.
  * 기존 파일이 있으면 읽어 반환하고, 없으면 신규 생성 후 저장한다.
@@ -40,13 +46,15 @@ export async function loadOrCreateInstallerRegistry(
   baseDir: string,
   appVersion: string,
   installerStaffId = "unknown"
-): Promise<InstallerRegistry> {
+): Promise<LoadInstallerRegistryResult> {
   const filePath = join(baseDir, PATHS.installerRegistry);
   const existing = await readJson<Partial<InstallerRegistry>>(filePath, {});
 
   if (existing.deviceId && existing.installedAt) {
-    // 기존 레지스트리 반환 (appVersion은 현재 버전으로 갱신)
-    return { ...(existing as InstallerRegistry), appVersion };
+    return {
+      registry: { ...(existing as InstallerRegistry), appVersion },
+      created: false
+    };
   }
 
   // 최초 설치 — 새 레지스트리 생성
@@ -63,7 +71,7 @@ export async function loadOrCreateInstallerRegistry(
   };
 
   await writeJson(filePath, registry);
-  return registry;
+  return { registry, created: true };
 }
 
 /**

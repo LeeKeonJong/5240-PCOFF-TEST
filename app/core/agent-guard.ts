@@ -1,10 +1,18 @@
 import { createHash } from "node:crypto";
-import { readFile, access, constants, stat, watch } from "node:fs/promises";
-import { join, basename } from "node:path";
+import { readFile, access, constants, stat, watch, mkdir } from "node:fs/promises";
+import { join } from "node:path";
 import { existsSync, FSWatcher } from "node:fs";
 import { LOG_CODES, PATHS } from "./constants.js";
 import { readJson, writeJson } from "./storage.js";
 import { TelemetryLogger } from "./telemetry-log.js";
+
+/** 격리 모드 상태 (복구 실패 시 진입, 운영팀 조치 대기) */
+export interface IsolationState {
+  enteredAt: string;
+  reason: string;
+  eventType: string;
+  filePath?: string;
+}
 
 /**
  * 무결성 상태 저장 구조
@@ -339,13 +347,11 @@ export class AgentGuard {
   }
 
   /**
-   * 탐지 이벤트 처리
+   * 탐지 이벤트 처리 (FR-19: UNINSTALL_ATTEMPT·SELF_HEAL_*·ISOLATION_MODE_ENTERED 로그)
    */
   private async handleTamperEvent(event: TamperEvent): Promise<void> {
-    // 이벤트 기록
     this.status.tamperEvents.push(event);
 
-    // 로그 기록
     await this.logger.write(LOG_CODES.AGENT_TAMPER_DETECTED, "ERROR", {
       type: event.type,
       filePath: event.filePath,
@@ -353,7 +359,13 @@ export class AgentGuard {
       currentHash: event.currentHash
     });
 
-    // 복구 시도
+    if (event.type === "file_deleted") {
+      await this.logger.write(LOG_CODES.UNINSTALL_ATTEMPT, "ERROR", {
+        filePath: event.filePath,
+        detectedAt: event.detectedAt
+      });
+    }
+
     const recovered = await this.attemptRecovery(event);
     event.recovered = recovered;
 
@@ -362,12 +374,44 @@ export class AgentGuard {
         filePath: event.filePath,
         strategy: event.recoveryStrategy
       });
+      await this.logger.write(LOG_CODES.SELF_HEAL_SUCCESS, "INFO", {
+        filePath: event.filePath,
+        strategy: event.recoveryStrategy
+      });
     } else {
       await this.logger.write(LOG_CODES.AGENT_RECOVERY_FAILED, "ERROR", {
         filePath: event.filePath,
         type: event.type
       });
+      await this.logger.write(LOG_CODES.SELF_HEAL_FAIL, "ERROR", {
+        filePath: event.filePath,
+        type: event.type
+      });
+      await this.enterIsolationMode(event);
     }
+  }
+
+  /** 격리 모드 진입: 상태 저장 + ISOLATION_MODE_ENTERED 로그 */
+  private async enterIsolationMode(event: TamperEvent): Promise<void> {
+    const state: IsolationState = {
+      enteredAt: new Date().toISOString(),
+      reason: "recovery_failed",
+      eventType: event.type,
+      filePath: event.filePath
+    };
+    const guardDir = join(this.baseDir, PATHS.guardDir);
+    const path = join(this.baseDir, PATHS.isolationMode);
+    try {
+      await mkdir(guardDir, { recursive: true });
+      await writeJson(path, state);
+    } catch {
+      // 저장 실패해도 로그는 남김
+    }
+    await this.logger.write(LOG_CODES.ISOLATION_MODE_ENTERED, "ERROR", {
+      reason: state.reason,
+      eventType: event.type,
+      filePath: event.filePath
+    });
   }
 
   /**
@@ -593,5 +637,18 @@ export class AgentGuard {
     });
 
     this.status.tamperEvents.push(event);
+  }
+}
+
+/**
+ * 격리 모드 상태를 읽는다. 파일이 없거나 유효하지 않으면 null.
+ */
+export async function readIsolationState(baseDir: string): Promise<IsolationState | null> {
+  const path = join(baseDir, PATHS.isolationMode);
+  try {
+    const state = await readJson<IsolationState | null>(path, null);
+    return state && state.enteredAt ? state : null;
+  } catch {
+    return null;
   }
 }

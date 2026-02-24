@@ -191,16 +191,16 @@ PRD Flow 기준 시뮬레이터 시나리오와 매핑입니다.
 - **잠금화면 강제 전체 화면**: 잠금 시 `setFullScreen(true)`·항상 위(screen-saver)·`setVisibleOnAllWorkspaces(true)`. 해제/로그인 전환 시 전체 화면 해제·에이전트 620×840/로그인 520×620 크기 복원. ESC 해제 방지(`leave-full-screen` 시 재진입). Cmd+Tab/Alt+Tab 후 포커스 복귀(blur 시 `app.focus({ steal: true })`·`moveTop`·재포커스). ✅
 - **로그아웃·작동정보·잠금화면**: 전역 핫키(Cmd+Shift+L/I/K, Ctrl+Shift+L/I/K). 잠금화면 중에도 로그아웃 핫키 동작(close 우회). 로그인 후 잠금 필요 시 같은 창에서 잠금화면으로 전환.
 - **메인(잠금) 화면**: 근태정보 조회, 임시연장/긴급사용/PC-ON/PC-OFF 버튼. **PC-ON**·**긴급사용** 성공 시 같은 창에서 **작동정보 화면**으로 전환.
-- **설치자 레지스트리 (FR-09)**: `app/core/installer-registry.ts`. deviceId(UUID)·설치 시각·OS·앱 버전 수집, `installer-registry.json` 로컬 저장, 앱 시작 시 서버 동기화(`/registerInstallerInfo.do`). ✅
+- **설치자 레지스트리 (FR-09)**: `app/core/installer-registry.ts`. deviceId(UUID)·설치 시각·OS·앱 버전 수집, `installer-registry.json` 로컬 저장, 앱 시작 시 서버 동기화(`/registerInstallerInfo.do`). 첫 실행 시 INSTALL_START/INSTALL_SUCCESS(또는 INSTALL_FAIL) 감사 로그(FR-19 Phase 2). ✅
 - **이석 감지·해제 플로우 (FR-11)**: `app/core/leave-seat.ts`. `screenType=empty` 감지 → `leaveSeatReasonYn/ManYn=YES`이면 사유 입력 모달 → `callCmmPcOnOffLogPrc(IN, reason)`. 휴게시간(`breakStartTime~breakEndTime`) 중이면 사유 면제. 시뮬레이터 Flow-02/02b PASS. ✅
 - **로컬 이석/절전 감지 (FR-11)**: `app/core/leave-seat-detector.ts`. 유휴(Idle): `powerMonitor.getSystemIdleTime()` 5초 폴링, API 정책(`leaveSeatUseYn`, `leaveSeatTime` 분) 초과 시 잠금화면. 절전: suspend 시각 기록, resume 시 경과 >= leaveSeatTime 이면 이석 잠금(감지시각=절전 시작). `getWorkTime` 응답에 로컬 이석 병합. **API 정규화**: 서버가 `leaveSeatUseYn`을 `"YES"`/`"NO"`로 내려줘도 `normalizeLeaveSeatUseYn()`으로 `"Y"`/`"N"` 변환 후 정책 적용. ✅
 - **이석정보 서버 전송 (FR-12)**: `app/core/leave-seat-reporter.ts`. 세션 기반(`leaveSeatSessionId`) START/END 전송(`POST /reportLeaveSeatEvent.do`). 이석 감지 시 START, PC-ON 해제 시 END. 재시도 큐(`leave-seat-queue.jsonl`) + 지수 백오프, 30초 주기 플러시. ✅
 - **API 연동**: getPcOffWorkTime, getPcOffServareaInfo, getPcOffLoginUserInfo, callPcOffTempDelay, callPcOffEmergencyUse, callPcOffEmergencyUnlock, callCmmPcOnOffLogPrc, reportLeaveSeatEvent. **API v1.9 정합성**: WorkTimeResponse 전체 필드, recoder "PC-OFF", 임시연장 extCount, 긴급사용 emergencyUsePass·인증번호 모달.
 - **시뮬레이터·CI**: Flow-01~08 시나리오, parity-report.json, parity-summary.md, CI 아티팩트
-- **로깅**: JSONL, TelemetryLogger. LOG_CODES 상수로 APP_START, LOGIN_SUCCESS/FAIL, LOGOUT, LOCK/UNLOCK_TRIGGERED, UPDATE_*, AGENT_*, INSTALLER_REGISTRY_SYNC/FAIL, TRAY_*, LEAVE_SEAT_* 등 기록 (logcode.md·constants.ts 참고) ✅
+- **로깅**: JSONL, TelemetryLogger. LOG_CODES 상수로 APP_START, LOGIN_SUCCESS/FAIL, LOGOUT, LOCK/UNLOCK_TRIGGERED, UPDATE_*, AGENT_*, INSTALLER_REGISTRY_SYNC/FAIL, INSTALL_*/UNINSTALL_*/SELF_HEAL_*/ISOLATION_MODE_ENTERED, TRAY_*, LEAVE_SEAT_* 등 기록 (logcode.md·constants.ts 참고) ✅
 - **자동 업데이트 (FR-03)**: `electron-updater` 기반 무확인 자동 업데이트, 재시도 큐, 진행률 UI 표시 ✅
 - **비밀번호 변경 확인 (FR-04)**: 서버 `pwdChgYn=Y` 감지 시 확인 전용 모달, 검증/재로그인 없음 ✅
-- **Agent Guard (FR-07)**: 무결성 체크(SHA-256), 파일 감시, 탐지 시 로그·복구 트리거, IPC 연동 ✅
+- **Agent Guard (FR-07)**: 무결성 체크(SHA-256), 파일 감시, 탐지 시 로그·복구 트리거, IPC 연동. 삭제 시도(UNINSTALL_ATTEMPT)·자동 복구 로그(SELF_HEAL_*)·격리 모드(guard/isolation-mode.json, ISOLATION_MODE_ENTERED) ✅
 - **Ops Observer (FR-08)**: heartbeat·로그 배치 서버 전송(`/reportAgentEvents.do`), 크래시/오프라인 보고 ✅
 - **오프라인 복구·잠금 (FR-17)**: OfflineManager(30분 유예 → OFFLINE_LOCKED), heartbeat/API 연속 실패 감지, 잠금화면 오프라인 UI·다시 시도, offline-state.json 저장·복원 ✅
 - **긴급해제 — 비밀번호 기반 (FR-15)**: EmergencyUnlockManager(5회 시도제한·5분 차단, 3시간 만료·5분 전 예고), 잠금화면 비밀번호 모달, callPcOffEmergencyUnlock API 연동 ✅
@@ -223,7 +223,7 @@ PRD Flow 기준 시뮬레이터 시나리오와 매핑입니다.
 | ~~1~~ | ~~이석 감지·해제 플로우~~ | Idle/절전 기반 이석 감지, 사유 입력, 휴게시간 예외 (FR-11, Flow-09) **완료** ✅ |
 | ~~2~~ | ~~로그 코드 전수 반영~~ | logcode.md와 constants.ts 동기화, LOG_CODES 상수 통합 **완료** ✅ |
 | 3 | 패키징·플랫폼 검증 | Windows/Mac CI 빌드·Release **완료** ✅. 코드 서명·notarization은 **마지막에 진행** (NFR-01, DoD) |
-| 4 | 인스톨/언인스톨 정책 | 설치자 식별, 무결성 기준선, 삭제 방지 (FR-19) |
+| ~~4~~ | ~~인스톨/언인스톨 정책~~ | 설치 후 감사 로그(INSTALL_*), 삭제 시도 탐지·격리 모드(FR-19 Phase 1·2) **완료** ✅. 정상 언인스톨·설치기 스크립트 연동은 미구현 |
 | 5 | 프로세스 Kill 통제 | 사용자 Kill 차단, OTP 승인 (FR-18) |
 | ~~6~~ | ~~오프라인 복구·잠금~~ | 30분 유예, 오프라인 잠금, 복구 시도 (FR-17, Flow-13) **완료** ✅ |
 | 7 | 다중 디스플레이 | alwaysOnTop·포커스·강제 전체화면·Cmd+Tab 복귀·QA **완료** ✅. 디스플레이당 잠금 창 1개(§11)는 미구현 |

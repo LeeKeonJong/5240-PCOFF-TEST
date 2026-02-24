@@ -210,7 +210,7 @@ async function runInstallerRegistrySyncScenario(): Promise<ScenarioResult> {
     const logger = new TelemetryLogger(baseDir, "sim-installer", process.platform);
 
     // 1. 레지스트리 로드(없으면 신규 생성)
-    const registry = await loadOrCreateInstallerRegistry(baseDir, "0.1.0-sim", "sim-user");
+    const { registry } = await loadOrCreateInstallerRegistry(baseDir, "0.1.0-sim", "sim-user");
 
     // 2. 서버 동기화 시도 (시뮬레이터는 서버 없이 실행하므로 fail 허용)
     const synced = await syncInstallerRegistry(baseDir, registry, null);

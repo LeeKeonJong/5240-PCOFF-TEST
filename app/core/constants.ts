@@ -7,6 +7,7 @@ export const PATHS = {
   guardDir: "guard",
   integrity: "guard/integrity.json",
   watchList: "guard/watch-list.json",
+  isolationMode: "guard/isolation-mode.json",
   updateDir: "update",
   retryQueue: "update/retry-queue.json",
   installerRegistry: "installer-registry.json",
@@ -49,6 +50,19 @@ export const LOG_CODES = {
   // 설치자 레지스트리 (FR-09)
   INSTALLER_REGISTRY_SYNC: "INSTALLER_REGISTRY_SYNC",
   INSTALLER_REGISTRY_FAIL: "INSTALLER_REGISTRY_FAIL",
+
+  // 인스톨/언인스톨 (FR-19)
+  INSTALL_START: "INSTALL_START",
+  INSTALL_SUCCESS: "INSTALL_SUCCESS",
+  INSTALL_FAIL: "INSTALL_FAIL",
+  INSTALL_ROLLBACK: "INSTALL_ROLLBACK",
+  UNINSTALL_REQUEST: "UNINSTALL_REQUEST",
+  UNINSTALL_ATTEMPT: "UNINSTALL_ATTEMPT",
+  UNINSTALL_SUCCESS: "UNINSTALL_SUCCESS",
+  UNINSTALL_FAIL: "UNINSTALL_FAIL",
+  SELF_HEAL_SUCCESS: "SELF_HEAL_SUCCESS",
+  SELF_HEAL_FAIL: "SELF_HEAL_FAIL",
+  ISOLATION_MODE_ENTERED: "ISOLATION_MODE_ENTERED",
 
   // 이석 감지 (FR-11)
   LEAVE_SEAT_DETECTED: "LEAVE_SEAT_DETECTED",
