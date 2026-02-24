@@ -23,7 +23,7 @@ import { OpsObserver } from "../core/ops-observer.js";
 import { OfflineManager, type ConnectivityState } from "../core/offline-manager.js";
 import { EmergencyUnlockManager } from "../core/emergency-unlock.js";
 import { AuthPolicy } from "../core/auth-policy.js";
-import { AgentGuard } from "../core/agent-guard.js";
+import { AgentGuard, readIsolationState } from "../core/agent-guard.js";
 import { PcOffApiClient, PcOffAuthClient, type WorkTimeResponse, type TenantLockPolicy } from "../core/api-client.js";
 import { resolveScreenType } from "../core/screen-display-logic.js";
 import {
@@ -56,6 +56,9 @@ let currentScreen: ScreenType = "login";
 
 /** 강제 종료(Ctrl+Shift+Q) 시 true. close 이벤트에서 preventDefault 하지 않고 창 닫기 허용 */
 let isForceQuit = false;
+
+/** FR-19: 격리 모드(복구 실패 시) — 잠금 유지, 운영팀 조치 대기 */
+let isolationModeActive = false;
 
 // 현재 운영 모드
 type OperationMode = "NORMAL" | "TEMP_EXTEND" | "EMERGENCY_USE" | "EMERGENCY_RELEASE";
@@ -338,6 +341,7 @@ function attachWindowHotkeys(win: BrowserWindow): void {
  * 임시연장/긴급사용 성공 직후 같은 창에서 에이전트 화면으로 돌아가기 위해 사용.
  */
 function showTrayInfoInCurrentWindow(): void {
+  if (isolationModeActive) return;
   if (!mainWindow || mainWindow.isDestroyed()) {
     void createTrayInfoWindow();
     return;
@@ -1254,16 +1258,23 @@ app.whenReady().then(async () => {
 
   await logger.write(LOG_CODES.APP_START, "INFO", { platform: process.platform });
 
-  // FR-09: 설치자 레지스트리 초기화 및 서버 동기화 시도
+  // FR-09: 설치자 레지스트리 초기화 및 서버 동기화 시도 (FR-19 인스톨 감사 로그)
   void (async () => {
     try {
       const userDisplay = await getLoginUserDisplay(baseDir);
       const appVersion = app.getVersion();
-      const registry = await loadOrCreateInstallerRegistry(
+      const { registry, created } = await loadOrCreateInstallerRegistry(
         baseDir,
         appVersion,
         userDisplay.loginUserId ?? "unknown"
       );
+      if (created) {
+        await logger.write(LOG_CODES.INSTALL_START, "INFO", { deviceId: registry.deviceId });
+        await logger.write(LOG_CODES.INSTALL_SUCCESS, "INFO", {
+          deviceId: registry.deviceId,
+          installedAt: registry.installedAt
+        });
+      }
       if (registry.syncStatus !== "synced") {
         const apiBaseUrl = await getApiBaseUrl(baseDir);
         const synced = await syncInstallerRegistry(baseDir, registry, apiBaseUrl);
@@ -1277,6 +1288,12 @@ app.whenReady().then(async () => {
             deviceId: registry.deviceId,
             reason: "server_sync_failed"
           });
+          if (created) {
+            await logger.write(LOG_CODES.INSTALL_FAIL, "WARN", {
+              deviceId: registry.deviceId,
+              reason: "server_sync_failed"
+            });
+          }
         }
       }
     } catch (err) {
@@ -1323,7 +1340,7 @@ app.whenReady().then(async () => {
         });
       }
     } else if (state === "ONLINE") {
-      if (currentScreen === "lock") {
+      if (currentScreen === "lock" && !isolationModeActive) {
         void createTrayInfoWindow();
       }
     }
@@ -1338,7 +1355,12 @@ app.whenReady().then(async () => {
   observer.start();
   // FR-07: Agent Guard 시작 (무결성 감시)
   await guard.start();
-  
+  const isolationState = await readIsolationState(baseDir);
+  isolationModeActive = !!isolationState;
+  if (isolationModeActive) {
+    console.warn("[PCOFF] 격리 모드 활성 — 복구 실패로 진입. 잠금 유지.", isolationState?.enteredAt);
+  }
+
   // 시스템 트레이 생성 (실패 시에도 앱은 계속 실행, Windows에서 아이콘 경로 등 이슈 대비)
   try {
     createTray();
@@ -1396,7 +1418,11 @@ app.whenReady().then(async () => {
     });
   }
 
-  if (hasLogin) {
+  if (isolationModeActive) {
+    await createLockWindow();
+    mainWindow?.show();
+    mainWindow?.focus();
+  } else if (hasLogin) {
     cachedApiBaseUrl = config?.apiBaseUrl ?? null;
     cachedUserServareaId = config?.userServareaId ?? "";
     cachedUserStaffId = config?.userStaffId ?? "";
@@ -1464,12 +1490,13 @@ app.on("window-all-closed", () => {
   }
 });
 
-// macOS: Dock 아이콘 클릭 시 창이 없으면 에이전트 화면 열기
+// macOS: Dock 아이콘 클릭 시 창이 없으면 에이전트 화면 열기 (격리 모드면 잠금 창)
 app.on("activate", () => {
   const hasVisibleWindow =
     mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible();
   if (!hasVisibleWindow) {
-    createTrayInfoWindow();
+    if (isolationModeActive) void createLockWindow();
+    else createTrayInfoWindow();
   } else {
     mainWindow!.show();
     mainWindow!.focus();
