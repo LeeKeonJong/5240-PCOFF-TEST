@@ -236,6 +236,7 @@ export class UpdateManager {
         // 패키징되지 않은(개발) 환경에서는 electron-updater가 스킵해 이벤트를 안 보냄 → 확인 중에서 복귀
         if (this.status.state === "checking") {
           this.status = { state: "not-available" };
+          this.sendStatusToRenderer();
         }
         return this.status;
       } catch (error) {
