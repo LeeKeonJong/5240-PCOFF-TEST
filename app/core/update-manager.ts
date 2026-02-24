@@ -92,6 +92,9 @@ export class UpdateManager {
         Accept: "application/octet-stream",
       };
 
+      // 0.2.5-2 → 0.2.5-3 같은 프리릴리스 간 업데이트 인식 (GitHub에서 Pre-release 체크 해제한 릴리스 포함)
+      (autoUpdater as { allowPrerelease?: boolean }).allowPrerelease = true;
+
       // 자동 다운로드 활성화 (무확인 자동 적용)
       autoUpdater.autoDownload = true;
       autoUpdater.autoInstallOnAppQuit = true;
@@ -122,7 +125,9 @@ export class UpdateManager {
       autoUpdater.on("update-not-available", (info) => {
         try {
           this.status = { state: "not-available" };
-          console.info("[UpdateManager] update not available (current:", this.appVersion + ", info:", String((info as { version?: string })?.version ?? "—") + ")");
+          const infoObj = info as unknown as { version?: string; [k: string]: unknown };
+          const remoteVersion = String(infoObj?.version ?? "—");
+          console.info("[UpdateManager] update not available — installed:", this.appVersion, ", release:", remoteVersion, "| raw:", JSON.stringify({ version: infoObj?.version }));
           this.sendStatusToRenderer();
         } catch (e) {
           console.warn("[UpdateManager] update-not-available handler:", e);
