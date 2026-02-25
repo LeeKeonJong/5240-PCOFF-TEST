@@ -36,9 +36,9 @@ export async function verifyKillOtpWithLog(
     await logger.write(LOG_CODES.KILL_OTP_VERIFIED, "INFO", { requestId });
     await logger.write(LOG_CODES.KILL_TOKEN_ISSUED, "INFO", { requestId, expiresAt: result.expiresAt });
     return result;
-  } catch {
+  } catch (err) {
     await logger.write(LOG_CODES.KILL_OTP_FAILED, "WARN", { requestId }).catch(() => {});
-    throw;
+    throw err;
   }
 }
 
@@ -61,8 +61,8 @@ export async function executeKillWithToken(
     } else {
       await logger.write(LOG_CODES.KILL_REJECTED, "WARN", { reason: "allowed=false" }).catch(() => {});
     }
-  } catch {
+  } catch (err) {
     await logger.write(LOG_CODES.KILL_REJECTED, "WARN", { reason: "token_invalid_or_expired" }).catch(() => {});
-    throw;
+    throw err;
   }
 }
