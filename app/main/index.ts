@@ -100,6 +100,20 @@ function invalidateRuntimeConfigCache(): void {
   }
 }
 
+/** 테스트 모드: 활성 시 설정된 오버라이드로 시업/종업/이석 등 재현 (에이전트 화면에서 핫키·토글로 활성) */
+let testModeEnabled = false;
+let testModeOverrides: Record<string, unknown> = {};
+
+/** 테스트 오버라이드를 base에 병합. base는 변경하지 않고 새 객체 반환 */
+function mergeTestOverrides(base: Record<string, unknown>): Record<string, unknown> {
+  if (Object.keys(testModeOverrides).length === 0) return base;
+  const merged = { ...base };
+  for (const [k, v] of Object.entries(testModeOverrides)) {
+    if (v !== undefined && v !== null && v !== "") merged[k] = v;
+  }
+  return merged;
+}
+
 /** 로컬 이석 감지(유휴/절전)로 잠금된 경우: 감지 시각·사유. PC-ON 해제 시 클리어 */
 let localLeaveSeatDetectedAt: Date | null = null;
 let localLeaveSeatReason: LeaveSeatDetectedReason | null = null;
@@ -1137,13 +1151,17 @@ async function showLockInWindow(win: BrowserWindow): Promise<void> {
   }, 500);
 }
 
-/** 이미 잠금화면(종업/시업 전)이면 true. 이석은 잠금 해제된 상태에서만 체크. */
+/** 이미 잠금화면(종업/시업 전)이면 true. 이석은 잠금 해제된 상태에서만 체크. 백엔드 정책은 pcOn~pcOff 구간이 사용 가능이므로, 해당 구간이면 false(이석 체크 적용). */
 function isAlreadyLockedByWorkHours(): boolean {
-  const base = resolveScreenType(
-    lastWorkTimeData as Partial<WorkTimeResponse> & { screenType?: string },
-    new Date(),
-    false
-  );
+  const work = lastWorkTimeData as Partial<WorkTimeResponse> & { screenType?: string };
+  const now = new Date();
+  const pcOnTime = parseYmdHm(String(work.pcOnYmdTime ?? ""));
+  const pcOffTime = parseYmdHm(String(work.pcOffYmdTime ?? ""));
+  if (pcOnTime && pcOffTime) {
+    // pcOn <= now < pcOff 이면 사용 가능 구간 → 이석 체크 적용(false)
+    return now < pcOnTime || now >= pcOffTime;
+  }
+  const base = resolveScreenType(work, now, false);
   return base === "off" || base === "before";
 }
 
@@ -2194,6 +2212,17 @@ type ConfigForLeave = {
 
 ipcMain.handle("pcoff:getWorkTime", async () => {
   const config = await readJson<ConfigForLeave>(join(baseDir, PATHS.config), {});
+  if (testModeEnabled && Object.keys(testModeOverrides).length > 0) {
+    const base = Object.keys(lastWorkTimeData).length > 0 ? lastWorkTimeData : (buildMockWorkTime() as Record<string, unknown>);
+    const merged = mergeTestOverrides(base);
+    if (localLeaveSeatDetectedAt) {
+      merged.leaveSeatOffInputMath = formatYmdHm(localLeaveSeatDetectedAt);
+      merged.screenType = "empty";
+    }
+    applyLockScreenLeaveFromConfig(merged, config);
+    applyLeaveSeatUnlockRequirePasswordFromConfig(merged, config);
+    return { source: "test", data: merged };
+  }
   const api = await getApiClient();
   if (!api) {
     const mockData = buildMockWorkTime() as Record<string, unknown>;
@@ -2826,9 +2855,38 @@ ipcMain.handle("pcoff:getOperationMode", async () => {
   return { mode: currentMode };
 });
 
+// 테스트 모드 (로컬 설정값으로 시업/종업/이석 재현)
+ipcMain.handle("pcoff:getTestModeState", async () => {
+  return { enabled: testModeEnabled, overrides: { ...testModeOverrides } };
+});
+ipcMain.handle("pcoff:setTestModeEnabled", async (_event, enabled: boolean) => {
+  testModeEnabled = !!enabled;
+  if (!testModeEnabled) {
+    testModeOverrides = {};
+    lastWorkTimeFetchedAt = null;
+  }
+  const wins = [mainWindow, ...Array.from(lockWindowsByDisplayId.values())].filter((w): w is BrowserWindow => Boolean(w && !w.isDestroyed()));
+  for (const win of wins) {
+    try {
+      win.webContents.send("pcoff:test-mode-changed", { enabled: testModeEnabled });
+    } catch {
+      // ignore
+    }
+  }
+  return { enabled: testModeEnabled };
+});
+ipcMain.handle("pcoff:setTestOverrides", async (_event, overrides: Record<string, unknown>) => {
+  testModeOverrides = typeof overrides === "object" && overrides !== null ? { ...overrides } : {};
+  const base = Object.keys(lastWorkTimeData).length > 0 ? lastWorkTimeData : (buildMockWorkTime() as Record<string, unknown>);
+  lastWorkTimeData = mergeTestOverrides(base);
+  lastWorkTimeFetchedAt = new Date().toISOString();
+  return { success: true };
+});
+
 // 로그인 성공 후: pcOnYmdTime/pcOffYmdTime 기준 잠금 필요 시 잠금화면 표시 (호출한 창을 재사용해 새 창 안 띄움)
 ipcMain.handle("pcoff:checkLockAndShow", async (event) => {
-  // FR-12: 로그인 직후 reporter 컨텍스트 갱신 및 시작
+  // 로그인 직후 저장된 state.json 기준으로 조회하도록 캐시 무효화
+  invalidateRuntimeConfigCache();
   const cfg = await loadRuntimeConfig(baseDir);
   if (cfg) {
     cachedApiBaseUrl = cfg.apiBaseUrl;
@@ -2836,6 +2894,84 @@ ipcMain.handle("pcoff:checkLockAndShow", async (event) => {
     cachedUserStaffId = cfg.userStaffId;
   }
   leaveSeatReporter.start();
+
+  // 로그인 직후 1회 근태·잠금화면·이석·긴급해제 등 각종 설정 전체 조회 (fetchWorkTimeWithLockScreen = getPcOffWorkTime + getLockPolicy/getLockScreenInfo). state.json에는 로그인 정보만 있으므로 서버에서 전체 설정을 불러와 lastWorkTimeData 및 각 정책에 반영.
+  const api = await getApiClient();
+  if (api) {
+    try {
+      const data = await fetchWorkTimeWithLockScreen(api);
+      const dataRecord = data as unknown as Record<string, unknown>;
+      preserveLocalPcExCountIfHigher(dataRecord);
+      lastWorkTimeData = dataRecord;
+      applyResolvedScreenType(lastWorkTimeData);
+      lastWorkTimeFetchedAt = new Date().toISOString();
+      leaveSeatDetector.updatePolicy({
+        leaveSeatUseYn: normalizeLeaveSeatUseYn(data.leaveSeatUseYn),
+        leaveSeatTimeMinutes: Number(data.leaveSeatTime ?? 0) || 0
+      });
+      emergencyUnlockManager?.updatePolicy({
+        unlockTimeMinutes: Number(data.emergencyUnlockTime ?? 0) || undefined,
+        maxFailures: Number(data.emergencyUnlockMaxFailures ?? 0) || undefined,
+        lockoutSeconds: Number(data.emergencyUnlockLockoutSeconds ?? 0) || undefined
+      });
+      const wt = data as Record<string, unknown>;
+      logLoadedConfig("근태·설정 전체 (로그인 직후 조회)", {
+        pcOnYn: data.pcOnYn,
+        screenType: wt.screenType,
+        pcOnYmdTime: data.pcOnYmdTime,
+        pcOffYmdTime: data.pcOffYmdTime,
+        exCountRenewal: data.exCountRenewal,
+        pcExCount: data.pcExCount,
+        pcExMaxCount: data.pcExMaxCount,
+        pcExTime: data.pcExTime,
+        leaveSeatUseYn: data.leaveSeatUseYn,
+        leaveSeatTime: data.leaveSeatTime,
+        leaveSeatReasonYn: data.leaveSeatReasonYn,
+        leaveSeatReasonManYn: data.leaveSeatReasonManYn,
+        pcoffEmergencyYesNo: data.pcoffEmergencyYesNo,
+        emergencyUnlockTime: data.emergencyUnlockTime,
+        emergencyUnlockMaxFailures: data.emergencyUnlockMaxFailures,
+        emergencyUnlockLockoutSeconds: data.emergencyUnlockLockoutSeconds,
+        lockScreenBeforeTitle: wt.lockScreenBeforeTitle ? "(설정됨)" : undefined,
+        lockScreenOffTitle: wt.lockScreenOffTitle ? "(설정됨)" : undefined,
+        lockScreenLeaveTitle: wt.lockScreenLeaveTitle ? "(설정됨)" : undefined
+      });
+      void offlineManager.reportApiSuccess();
+    } catch (err) {
+      await logger.write(LOG_CODES.OFFLINE_DETECTED, "WARN", { step: "getPcOffWorkTime_after_login", error: String(err) });
+    }
+  }
+
+  // 최초 로그인 시에는 app.whenReady에서 leaveSeatDetector.start()가 호출되지 않음 → 로그인 성공 시 이석 감지 시작
+  leaveSeatDetector.start({
+    isLeaveSeatActive: () => localLeaveSeatDetectedAt !== null,
+    onIdleDetected: (detectedAt, idleSeconds) => {
+      void logger.write(LOG_CODES.LEAVE_SEAT_IDLE_DETECTED, "INFO", {
+        detectedAt: detectedAt.toISOString(),
+        idleSeconds,
+        leaveSeatTimeMinutes: lastWorkTimeData?.leaveSeatTime ?? 0
+      });
+      const wsType = currentMode === "TEMP_EXTEND" ? "TEMP_EXTEND"
+        : currentMode === "EMERGENCY_USE" ? "EMERGENCY_USE" : "NORMAL";
+      showLockForLocalLeaveSeat(detectedAt, "INACTIVITY", wsType);
+    },
+    onSleepDetected: (detectedAt, sleepElapsedSeconds) => {
+      void logger.write(LOG_CODES.LEAVE_SEAT_SLEEP_DETECTED, "INFO", {
+        detectedAt: detectedAt.toISOString(),
+        sleepElapsedSeconds,
+        leaveSeatTimeMinutes: lastWorkTimeData?.leaveSeatTime ?? 0
+      });
+      const wsType = currentMode === "TEMP_EXTEND" ? "TEMP_EXTEND"
+        : currentMode === "EMERGENCY_USE" ? "EMERGENCY_USE" : "NORMAL";
+      showLockForLocalLeaveSeat(detectedAt, "SLEEP_EXCEEDED", wsType);
+    },
+    onSleepEntered: () => void logger.write(LOG_CODES.SLEEP_ENTERED, "INFO", {}),
+    onSleepResumed: () => void logger.write(LOG_CODES.SLEEP_RESUMED, "INFO", {})
+  });
+  leaveSeatDetector.updatePolicy({
+    leaveSeatUseYn: normalizeLeaveSeatUseYn(lastWorkTimeData?.leaveSeatUseYn),
+    leaveSeatTimeMinutes: Number(lastWorkTimeData?.leaveSeatTime ?? 0) || 0
+  });
 
   const reuseWin = BrowserWindow.fromWebContents(event.sender);
   const lockOpened = await checkLockAndShowLockWindow(reuseWin ?? undefined);
