@@ -577,6 +577,7 @@ function applyLockInfo(work) {
 if (typeof window !== "undefined" && window.pcoffApi?.onLockInitialWork) {
   window.pcoffApi.onLockInitialWork((data) => {
     const work = coerceWorkTimeFromApi(data);
+    if (extendCountEl) extendCountEl.textContent = String(work.pcExCount ?? 0);
     applyLockInfo(work);
     applyButtonDisp(work);
   });

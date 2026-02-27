@@ -439,7 +439,14 @@ async function ensureLockWindowsForAllDisplays(): Promise<void> {
     if (lockWindowsByDisplayId.has(display.id)) {
       const existing = lockWindowsByDisplayId.get(display.id)!;
       if (existing.isDestroyed()) lockWindowsByDisplayId.delete(display.id);
-      else continue;
+      else {
+        try {
+          existing.webContents.send("pcoff:lock-initial-work", lastWorkTimeData);
+        } catch {
+          // 이미 파괴 중이면 무시
+        }
+        continue;
+      }
     }
     const win = new BrowserWindow({
       width: display.bounds.width,
@@ -509,8 +516,9 @@ function attachWindowHotkeys(win: BrowserWindow): void {
  * macOS: 풀스크린 잠금창 재사용 시 setFullScreen(false)/setSize가 적용되지 않아
  * 기존 창을 닫고 새 창(620×840)을 열어 에이전트 기본 크기로 표시.
  * Windows: 같은 창에서 hide → 로드 → show(620×840).
+ * @param onDisplay - 지정 시 해당 디스플레이에 창 배치 (보조 모니터에서 긴급해제 시 반응 보장)
  */
-function showTrayInfoInCurrentWindow(): void {
+function showTrayInfoInCurrentWindow(onDisplay?: Electron.Display): void {
   if (isolationModeActive) return;
   currentScreen = "tray-info";
   closeAllLockWindows();
@@ -540,7 +548,19 @@ function showTrayInfoInCurrentWindow(): void {
     if (win.isDestroyed() || currentScreen !== "tray-info") return;
     if (win.isMaximized()) win.unmaximize();
     win.setSize(620, 840);
-    win.center();
+    if (onDisplay?.workArea) {
+      const wa = onDisplay.workArea;
+      const w = 620;
+      const h = 840;
+      win.setBounds({
+        x: wa.x + Math.max(0, Math.floor((wa.width - w) / 2)),
+        y: wa.y + Math.max(0, Math.floor((wa.height - h) / 2)),
+        width: w,
+        height: h
+      });
+    } else {
+      win.center();
+    }
     win.show();
     win.focus();
     if (process.platform === "win32") {
@@ -1303,6 +1323,21 @@ async function refreshWorkTimeFromApi(): Promise<void> {
     });
   } catch (e) {
     console.info("[PCOFF] refreshWorkTimeFromApi 실패:", String(e));
+  }
+  if (currentScreen === "lock") broadcastWorkTimeToLockWindows();
+}
+
+/** 잠금화면 표시 중일 때 모든 잠금창(주·보조)에 최신 근태 데이터 전송 — 임시연장 카운트 등 동기화 */
+function broadcastWorkTimeToLockWindows(): void {
+  try {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send("pcoff:lock-initial-work", lastWorkTimeData);
+    }
+    for (const win of lockWindowsByDisplayId.values()) {
+      if (!win.isDestroyed()) win.webContents.send("pcoff:lock-initial-work", lastWorkTimeData);
+    }
+  } catch (e) {
+    console.info("[PCOFF] broadcastWorkTimeToLockWindows:", String(e));
   }
 }
 
@@ -2751,14 +2786,23 @@ ipcMain.handle("pcoff:retryConnectivity", async () => {
 });
 
 // FR-15: 긴급해제 IPC
-ipcMain.handle("pcoff:requestEmergencyUnlock", async (_event, payload: { password: string; reason?: string }) => {
+ipcMain.handle("pcoff:requestEmergencyUnlock", async (event, payload: { password: string; reason?: string }) => {
   const api = await getApiClient();
   if (!api) return { success: false, message: "API 클라이언트를 사용할 수 없습니다.", remainingAttempts: 0 };
   const result = await emergencyUnlockManager.attempt(api, payload.password, payload.reason);
   if (result.success) {
+    let onDisplay: Electron.Display | undefined;
+    const senderWin = BrowserWindow.fromWebContents(event.sender);
+    if (senderWin && !senderWin.isDestroyed()) {
+      try {
+        onDisplay = screen.getDisplayMatching(senderWin.getBounds());
+      } catch {
+        // 디스플레이 조회 실패 시 무시
+      }
+    }
     setOperationMode("EMERGENCY_RELEASE");
     await refreshWorkTimeFromApi();
-    showTrayInfoInCurrentWindow();
+    showTrayInfoInCurrentWindow(onDisplay);
   }
   return result;
 });
