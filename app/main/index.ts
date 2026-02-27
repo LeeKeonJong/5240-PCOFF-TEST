@@ -957,13 +957,32 @@ async function createLockWindow(): Promise<void> {
       console.info("[PCOFF] 잠금화면 문구 선로드 실패:", String(e));
     }
   }
-
+  // 이석 감지로 연 잠금창이면 fetch 실패 여부와 관계없이 이석 화면(empty)으로 고정, config 기준 비밀번호·설정된 이석 잠금화면 문구 반영
+  if (localLeaveSeatDetectedAt) {
+    lastWorkTimeData.screenType = "empty";
+    lastWorkTimeData.leaveSeatOffInputMath = formatYmdHm(localLeaveSeatDetectedAt);
+    const config = await readJson<{
+      leaveSeatUnlockRequirePassword?: boolean;
+      lockScreen?: { leave?: { title?: string; message?: string; backgroundUrl?: string; logoUrl?: string } };
+    }>(join(baseDir, PATHS.config), {});
+    applyLeaveSeatUnlockRequirePasswordFromConfig(lastWorkTimeData, config);
+    applyLockScreenLeaveFromConfig(lastWorkTimeData, config);
+  }
   if (mainWindow && !mainWindow.isDestroyed()) {
     currentScreen = "lock";
     mainWindow.setTitle("PCOFF 잠금화면");
     mainWindow.setVisibleOnAllWorkspaces(true);
     const primaryDisplay = screen.getPrimaryDisplay();
     mainWindow.setBounds(primaryDisplay.bounds);
+    mainWindow.webContents.once("did-finish-load", () => {
+      if (mainWindow && !mainWindow.isDestroyed() && currentScreen === "lock") {
+        try {
+          mainWindow.webContents.send("pcoff:lock-initial-work", lastWorkTimeData);
+        } catch {
+          // 이미 파괴 중이면 무시
+        }
+      }
+    });
     await loadRendererInWindow(mainWindow, "lock.html").catch((err) => {
       console.error("[PCOFF] 잠금화면 로드 실패:", err);
     });
@@ -979,7 +998,11 @@ async function createLockWindow(): Promise<void> {
         mainWindow.setAlwaysOnTop(true, "screen-saver");
       }
     });
-    void ensureLockWindowsForAllDisplays();
+    await ensureLockWindowsForAllDisplays();
+    // 디스플레이 목록 지연 대비: 500ms 후 보조 창 한 번 더 시도
+    setTimeout(() => {
+      if (currentScreen === "lock") void ensureLockWindowsForAllDisplays();
+    }, 500);
     return;
   }
 
@@ -1006,6 +1029,15 @@ async function createLockWindow(): Promise<void> {
   attachMainWindowCloseHandler(win);
   attachWindowHotkeys(win);
   win.setVisibleOnAllWorkspaces(true);
+  win.webContents.once("did-finish-load", () => {
+    if (!win.isDestroyed() && currentScreen === "lock") {
+      try {
+        win.webContents.send("pcoff:lock-initial-work", lastWorkTimeData);
+      } catch {
+        // 이미 파괴 중이면 무시
+      }
+    }
+  });
   win.webContents.on("did-fail-load", (_event, code, desc, url) => {
     if (currentScreen === "lock" && url && (url.includes("lock.html") || url.includes("lock"))) {
       console.error("[PCOFF] 잠금창 did-fail-load:", code, desc, url);
@@ -1025,7 +1057,11 @@ async function createLockWindow(): Promise<void> {
       win.setAlwaysOnTop(true, "screen-saver");
     }
   });
-  void ensureLockWindowsForAllDisplays();
+  await ensureLockWindowsForAllDisplays();
+  // 디스플레이 목록 지연(연결 직후 등) 대비: 잠금화면 표시 후 한 번 더 보조 창 생성 시도
+  setTimeout(() => {
+    if (currentScreen === "lock") void ensureLockWindowsForAllDisplays();
+  }, 500);
 }
 
 /** 같은 창에 잠금 화면 로드. 문구 데이터 선로드 후 로드 (핫키와 동일하게 호출 보장) */
@@ -1053,12 +1089,32 @@ async function showLockInWindow(win: BrowserWindow): Promise<void> {
       // 선로드 실패 시 무시, getWorkTime에서 다시 시도
     }
   }
+  // 이석 감지로 연 잠금창이면 fetch 실패 여부와 관계없이 이석 화면(empty)으로 고정, config 기준 비밀번호·설정된 이석 잠금화면 문구 반영
+  if (localLeaveSeatDetectedAt) {
+    lastWorkTimeData.screenType = "empty";
+    lastWorkTimeData.leaveSeatOffInputMath = formatYmdHm(localLeaveSeatDetectedAt);
+    const config = await readJson<{
+      leaveSeatUnlockRequirePassword?: boolean;
+      lockScreen?: { leave?: { title?: string; message?: string; backgroundUrl?: string; logoUrl?: string } };
+    }>(join(baseDir, PATHS.config), {});
+    applyLeaveSeatUnlockRequirePasswordFromConfig(lastWorkTimeData, config);
+    applyLockScreenLeaveFromConfig(lastWorkTimeData, config);
+  }
   mainWindow = win;
   currentScreen = "lock";
   win.setTitle("PCOFF 잠금화면");
   win.setVisibleOnAllWorkspaces(true);
   const primaryDisplay = screen.getPrimaryDisplay();
   win.setBounds(primaryDisplay.bounds);
+  win.webContents.once("did-finish-load", () => {
+    if (!win.isDestroyed() && currentScreen === "lock") {
+      try {
+        win.webContents.send("pcoff:lock-initial-work", lastWorkTimeData);
+      } catch {
+        // 이미 파괴 중이면 무시
+      }
+    }
+  });
   await loadRendererInWindow(win, "lock.html").catch((err) => {
     console.error("[PCOFF] 잠금화면 로드 실패 (showLockInWindow):", err);
   });
@@ -1074,7 +1130,11 @@ async function showLockInWindow(win: BrowserWindow): Promise<void> {
       win.setAlwaysOnTop(true, "screen-saver");
     }
   });
-  void ensureLockWindowsForAllDisplays();
+  await ensureLockWindowsForAllDisplays();
+  // 디스플레이 목록 지연(연결 직후 등) 대비: 잠금화면 표시 후 한 번 더 보조 창 생성 시도
+  setTimeout(() => {
+    if (currentScreen === "lock") void ensureLockWindowsForAllDisplays();
+  }, 500);
 }
 
 /** 이미 잠금화면(종업/시업 전)이면 true. 이석은 잠금 해제된 상태에서만 체크. */
@@ -1087,14 +1147,15 @@ function isAlreadyLockedByWorkHours(): boolean {
   return base === "off" || base === "before";
 }
 
-/** 로컬 이석 감지(유휴/절전) 시 잠금화면 표시. 잠금 해제된 에이전트 화면에서만 동작. 임시연장·긴급사용/긴급해제 중에는 이석 체크 안 함. */
+/** 로컬 이석 감지(유휴/절전) 시 잠금화면 표시. 잠금 해제된 에이전트 화면에서만 동작. 긴급해제(EMERGENCY_RELEASE) 중에만 이석 체크 제외, 임시연장·긴급사용은 이석 체크 적용. */
 function showLockForLocalLeaveSeat(
   detectedAt: Date,
   reason: LeaveSeatDetectedReason,
   workSessionType?: "NORMAL" | "TEMP_EXTEND" | "EMERGENCY_USE"
 ): void {
-  if (isAlreadyLockedByWorkHours()) return;
-  if (currentMode === "TEMP_EXTEND" || currentMode === "EMERGENCY_USE" || currentMode === "EMERGENCY_RELEASE") return;
+  if (currentMode === "EMERGENCY_RELEASE") return;
+  // 임시연장·긴급사용 중에는 resolveScreenType이 서버 기준이라 off로 나올 수 있음 → 이석 체크는 적용하므로 여기서는 스킵하지 않음
+  if (currentMode !== "TEMP_EXTEND" && currentMode !== "EMERGENCY_USE" && isAlreadyLockedByWorkHours()) return;
   const wsType = workSessionType ?? "NORMAL";
   void leaveSeatReporter.reportStart(reason, wsType, detectedAt);
   localLeaveSeatDetectedAt = detectedAt;
@@ -1631,6 +1692,7 @@ app.whenReady().then(async () => {
         const safeConfig: Record<string, unknown> = {};
         if (bundled.apiBaseUrl) safeConfig.apiBaseUrl = bundled.apiBaseUrl;
         if (bundled.lockScreenApiUrl != null) safeConfig.lockScreenApiUrl = bundled.lockScreenApiUrl;
+        if (bundled.sendLockPassUrl != null) safeConfig.sendLockPassUrl = bundled.sendLockPassUrl;
         if (bundled.lockScreen != null && typeof bundled.lockScreen === "object" && !Array.isArray(bundled.lockScreen)) {
           safeConfig.lockScreen = bundled.lockScreen;
         }
@@ -1659,6 +1721,10 @@ app.whenReady().then(async () => {
           }
           if (cfg.lockScreenApiUrl == null && bundled.lockScreenApiUrl != null) {
             cfg.lockScreenApiUrl = bundled.lockScreenApiUrl;
+            changed = true;
+          }
+          if (cfg.sendLockPassUrl == null && bundled.sendLockPassUrl != null) {
+            cfg.sendLockPassUrl = bundled.sendLockPassUrl;
             changed = true;
           }
         }
@@ -2107,17 +2173,34 @@ function applyLeaveSeatUnlockRequirePasswordFromConfig(
   }
 }
 
+/** 이석 화면일 때 config.lockScreen.leave(설정된 이석 잠금화면 문구·배경) 병합 */
+function applyLockScreenLeaveFromConfig(
+  data: Record<string, unknown>,
+  config: { lockScreen?: { leave?: { title?: string; message?: string; backgroundUrl?: string; logoUrl?: string } } }
+): void {
+  if ((data.screenType ?? "") !== "empty") return;
+  const ls = config.lockScreen?.leave;
+  if (!ls) return;
+  if (!data.lockScreenLeaveTitle && ls.title) data.lockScreenLeaveTitle = ls.title;
+  if (!data.lockScreenLeaveMessage && ls.message) data.lockScreenLeaveMessage = ls.message;
+  if (!data.lockScreenLeaveBackground && ls.backgroundUrl) data.lockScreenLeaveBackground = ls.backgroundUrl;
+  if (!data.lockScreenLeaveLogo && ls.logoUrl) data.lockScreenLeaveLogo = ls.logoUrl;
+}
+
+type ConfigForLeave = {
+  leaveSeatUnlockRequirePassword?: boolean;
+  lockScreen?: { leave?: { title?: string; message?: string; backgroundUrl?: string; logoUrl?: string } };
+};
+
 ipcMain.handle("pcoff:getWorkTime", async () => {
-  const config = await readJson<{ leaveSeatUnlockRequirePassword?: boolean }>(
-    join(baseDir, PATHS.config),
-    {}
-  );
+  const config = await readJson<ConfigForLeave>(join(baseDir, PATHS.config), {});
   const api = await getApiClient();
   if (!api) {
     const mockData = buildMockWorkTime() as Record<string, unknown>;
     if (localLeaveSeatDetectedAt) {
       mockData.screenType = "empty";
       mockData.leaveSeatOffInputMath = formatYmdHm(localLeaveSeatDetectedAt);
+      applyLockScreenLeaveFromConfig(mockData, config);
     }
     applyLeaveSeatUnlockRequirePasswordFromConfig(mockData, config);
     logLoadedConfig("근태정보 (getWorkTime IPC, mock)", { source: "mock", pcOnYn: mockData.pcOnYn, screenType: mockData.screenType });
@@ -2129,8 +2212,13 @@ ipcMain.handle("pcoff:getWorkTime", async () => {
     const age = Date.now() - new Date(lastWorkTimeFetchedAt).getTime();
     if (age >= 0 && age < RECENT_WORKTIME_CACHE_MS) {
       const merged = { ...lastWorkTimeData } as Record<string, unknown>;
-      if (localLeaveSeatDetectedAt) merged.leaveSeatOffInputMath = formatYmdHm(localLeaveSeatDetectedAt);
-      merged.screenType = resolveScreenType(merged, new Date(), !!localLeaveSeatDetectedAt);
+      if (localLeaveSeatDetectedAt) {
+        merged.leaveSeatOffInputMath = formatYmdHm(localLeaveSeatDetectedAt);
+        merged.screenType = "empty";
+        applyLockScreenLeaveFromConfig(merged, config);
+      } else {
+        merged.screenType = resolveScreenType(merged, new Date(), !!localLeaveSeatDetectedAt);
+      }
       applyLeaveSeatUnlockRequirePasswordFromConfig(merged, config);
       return { source: "api", data: merged };
     }
@@ -2158,8 +2246,13 @@ ipcMain.handle("pcoff:getWorkTime", async () => {
         const merged = { ...data } as Record<string, unknown>;
         merged.pcOffYmdTime = lastWorkTimeData.pcOffYmdTime;
         merged.pcExCount = lastWorkTimeData.pcExCount;
-        if (localLeaveSeatDetectedAt) merged.leaveSeatOffInputMath = formatYmdHm(localLeaveSeatDetectedAt);
-        merged.screenType = resolveScreenType(merged, new Date(), !!localLeaveSeatDetectedAt);
+        if (localLeaveSeatDetectedAt) {
+          merged.leaveSeatOffInputMath = formatYmdHm(localLeaveSeatDetectedAt);
+          merged.screenType = "empty";
+          applyLockScreenLeaveFromConfig(merged, config);
+        } else {
+          merged.screenType = resolveScreenType(merged, new Date(), !!localLeaveSeatDetectedAt);
+        }
         lastWorkTimeFetchedAt = new Date().toISOString();
         if (data.pwdChgYn === "Y") {
           await authPolicy.onPasswordChangeDetected("getPcOffWorkTime", data.pwdChgMsg);
@@ -2218,8 +2311,13 @@ ipcMain.handle("pcoff:getWorkTime", async () => {
     }
 
     const merged = { ...data } as Record<string, unknown>;
-    if (localLeaveSeatDetectedAt) merged.leaveSeatOffInputMath = formatYmdHm(localLeaveSeatDetectedAt);
-    merged.screenType = resolveScreenType(merged, new Date(), !!localLeaveSeatDetectedAt);
+    if (localLeaveSeatDetectedAt) {
+      merged.leaveSeatOffInputMath = formatYmdHm(localLeaveSeatDetectedAt);
+      merged.screenType = "empty";
+      applyLockScreenLeaveFromConfig(merged, config);
+    } else {
+      merged.screenType = resolveScreenType(merged, new Date(), !!localLeaveSeatDetectedAt);
+    }
     applyLeaveSeatUnlockRequirePasswordFromConfig(merged, config);
     return { source: "api", data: merged };
   } catch (error) {
@@ -2785,11 +2883,46 @@ ipcMain.handle("pcoff:retryConnectivity", async () => {
   return { recovered, snapshot: offlineManager.getSnapshot() };
 });
 
+/** 원본 WebView와 동일: 긴급해제 비밀번호 검증용 PHP URL. sendLockPassUrl 설정이 있으면 사용, 없으면 lockScreenApiUrl에서 도메인만 추출해 /Includes/sendLockPass.php 로 반환 */
+async function getSendLockPassUrl(baseDir: string): Promise<string | null> {
+  const config = await readJson<{
+    sendLockPassUrl?: string;
+    lockScreenApiUrl?: string;
+  }>(join(baseDir, PATHS.config), {});
+  if (config.sendLockPassUrl?.trim()) return config.sendLockPassUrl.trim();
+  if (config.lockScreenApiUrl?.trim()) {
+    try {
+      const origin = new URL(config.lockScreenApiUrl.trim()).origin;
+      return `${origin}/Includes/sendLockPass.php`;
+    } catch {
+      return null;
+    }
+  }
+  return null;
+}
+
 // FR-15: 긴급해제 IPC
 ipcMain.handle("pcoff:requestEmergencyUnlock", async (event, payload: { password: string; reason?: string }) => {
-  const api = await getApiClient();
-  if (!api) return { success: false, message: "API 클라이언트를 사용할 수 없습니다.", remainingAttempts: 0 };
-  const result = await emergencyUnlockManager.attempt(api, payload.password, payload.reason);
+  const sendLockPassUrl = await getSendLockPassUrl(baseDir);
+  const servareaId = (cachedUserServareaId || (await loadRuntimeConfig(baseDir))?.userServareaId) ?? "";
+
+  let result: { success: boolean; message: string; remainingAttempts: number; lockedUntil?: string };
+
+  if (sendLockPassUrl && servareaId) {
+    result = await emergencyUnlockManager.attemptViaPhp(sendLockPassUrl, servareaId, payload.password);
+  } else {
+    const api = await getApiClient();
+    if (!api) {
+      result = {
+        success: false,
+        message: "API 클라이언트를 사용할 수 없습니다.",
+        remainingAttempts: 0
+      };
+    } else {
+      result = await emergencyUnlockManager.attempt(api, payload.password, payload.reason);
+    }
+  }
+
   if (result.success) {
     let onDisplay: Electron.Display | undefined;
     const senderWin = BrowserWindow.fromWebContents(event.sender);
